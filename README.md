@@ -160,7 +160,7 @@ This split is intentional. In live testing, `azd up` reliably created the Azure 
 
 - use `azd provision`
 - package the Function App on Linux
-- deploy the zip with `az functionapp deployment source config-zip`
+- deploy the zip to a Flex Consumption Function App configured with managed-identity-backed deployment storage
 
 ### What is in the repo for Azure
 
@@ -214,11 +214,12 @@ export COST_QUERY_GRANULARITY=None
 This provisions:
 
 - a Linux Function App running Python 3.11
-- a Consumption hosting plan
+- a Flex Consumption hosting plan
 - a storage account
 - Application Insights
 - a Log Analytics workspace
-- a system-assigned managed identity on the Function App
+- a system-assigned managed identity on the Function App for Cost Management access
+- a user-assigned managed identity for Function host storage and deployment package access
 
 ### 4. Package the Function App code on Linux
 
@@ -240,7 +241,7 @@ dist/functionapp.zip
 ./scripts/deploy-function-code.sh
 ```
 
-This performs a zip deployment, calls `syncfunctiontriggers`, and waits for Azure to report the registered functions.
+This performs the code deployment to the Flex Consumption app, calls `syncfunctiontriggers`, and waits for Azure to report the registered functions.
 
 ### 6. Grant the Function App permission to read Cost Management data
 
@@ -434,18 +435,8 @@ If Azure shows an empty function list and the deployed app returns `404` for `/a
 
 For this sample, the most reliable model is `azd` for infrastructure plus a separate zip deployment for code.
 
-### `KeyBasedAuthenticationNotPermitted` during workflow code deploy
+### Policy blocks shared access keys
 
-If the GitHub Actions job fails in `./scripts/deploy-function-code.sh` with:
+This sample now targets Flex Consumption with managed-identity-backed storage configuration so it can work in environments that prohibit shared access keys on the Function App storage account.
 
-```text
-Key based authentication is not permitted on this storage account.
-```
-
-the Function App storage account is blocking the zip deployment path. This sample's deployment flow expects shared key access to remain enabled on the Function App storage account because Linux Function App package deployment still uses that storage path.
-
-Fix:
-
-- make sure `infra/main.bicep` sets `allowSharedKeyAccess: true` on the Function App storage account
-- rerun the infrastructure step so the storage account is updated
-- rerun the workflow
+If your organization blocks shared keys, rerun the infrastructure step after pulling the Flex Consumption changes so the Function App and deployment storage are recreated with the new model.
