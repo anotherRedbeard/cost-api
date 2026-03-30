@@ -1,7 +1,5 @@
 param environmentName string
 param location string = resourceGroup().location
-@description('Optional default subscription ID that the function uses when subscriptionId is not supplied in the request.')
-param targetCostSubscriptionId string = ''
 @allowed([
   'MonthToDate'
   'TheLastMonth'
@@ -213,7 +211,7 @@ resource functionAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     AzureWebJobsStorage__credential: 'managedidentity'
     COST_QUERY_GRANULARITY: defaultGranularity
     COST_QUERY_TIMEFRAME: defaultTimeframe
-    COST_SUBSCRIPTION_ID: targetCostSubscriptionId
+    COST_SUBSCRIPTION_ID: subscription().subscriptionId
     FUNCTIONS_EXTENSION_VERSION: '~4'
     FUNCTIONS_WORKER_RUNTIME: 'python'
     PYTHON_ENABLE_INIT_INDEXING: '1'

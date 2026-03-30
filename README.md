@@ -204,12 +204,6 @@ export COST_QUERY_TIMEFRAME=MonthToDate
 export COST_QUERY_GRANULARITY=None
 ```
 
-Optional if you want the app to fall back to a default subscription when a request does not provide `subscriptionId`:
-
-```bash
-export COST_SUBSCRIPTION_ID=<optional-default-subscription-id>
-```
-
 ### 3. Provision infrastructure with `azd`
 
 ```bash
@@ -270,7 +264,7 @@ export COST_ROLE_SCOPE=/providers/Microsoft.Management/managementGroups/<managem
 That script validates:
 
 - `health` returns `200`
-- the cost endpoint returns a controlled `400` when `subscriptionId` is omitted
+- the cost endpoint works against the Function App's deployed subscription by default
 
 If you also want the smoke test to run a real cost query, set a target just for the test:
 
@@ -455,3 +449,9 @@ For this sample, the most reliable model is `azd` for infrastructure plus a sepa
 This sample now targets Flex Consumption with managed-identity-backed storage configuration so it can work in environments that prohibit shared access keys on the Function App storage account.
 
 If your organization blocks shared keys, rerun the infrastructure step after pulling the Flex Consumption changes so the Function App and deployment storage are recreated with the new model.
+
+### Default subscription behavior
+
+When the function runs in Azure and the request omits `subscriptionId`, the app now defaults to the same Azure subscription it was deployed into.
+
+If you supply `subscriptionId` in the query string or request body, that request-specific value still wins.

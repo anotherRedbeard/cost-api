@@ -7,9 +7,6 @@
     },
     "location": {
       "value": "${AZURE_LOCATION}"
-    },
-    "targetCostSubscriptionId": {
-      "value": "${COST_SUBSCRIPTION_ID}"
     }
   }
 }

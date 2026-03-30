@@ -451,7 +451,7 @@ def subscription_cost(req: func.HttpRequest) -> func.HttpResponse:
         if not subscription_id:
             raise CostManagementConfigError(
                 "A subscription ID is required. Supply subscriptionId in the query string, "
-                "request body, or COST_SUBSCRIPTION_ID setting."
+                "request body, or configure the app's default subscription."
             )
 
         result = _query_subscription_cost(

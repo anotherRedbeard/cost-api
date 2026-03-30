@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "1592510155432951564"
+      "templateHash": "15465174932659784236"
     }
   },
   "parameters": {
@@ -15,13 +15,6 @@
     "location": {
       "type": "string",
       "defaultValue": "[resourceGroup().location]"
-    },
-    "targetCostSubscriptionId": {
-      "type": "string",
-      "defaultValue": "",
-      "metadata": {
-        "description": "Optional default subscription ID that the function uses when subscriptionId is not supplied in the request."
-      }
     },
     "defaultTimeframe": {
       "type": "string",
@@ -289,7 +282,7 @@
         "AzureWebJobsStorage__credential": "managedidentity",
         "COST_QUERY_GRANULARITY": "[parameters('defaultGranularity')]",
         "COST_QUERY_TIMEFRAME": "[parameters('defaultTimeframe')]",
-        "COST_SUBSCRIPTION_ID": "[parameters('targetCostSubscriptionId')]",
+        "COST_SUBSCRIPTION_ID": "[subscription().subscriptionId]",
         "FUNCTIONS_EXTENSION_VERSION": "~4",
         "FUNCTIONS_WORKER_RUNTIME": "python",
         "PYTHON_ENABLE_INIT_INDEXING": "1"
