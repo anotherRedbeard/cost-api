@@ -43,6 +43,10 @@ __pycache__/
 *$py.class
 
 # Azurite artifacts
+.azurite/
 __blobstorage__
 __queuestorage__
 __azurite_db*__.json
+
+# Local Functions host logs
+.func-host.log
