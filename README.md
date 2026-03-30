@@ -433,3 +433,19 @@ If Azure shows an empty function list and the deployed app returns `404` for `/a
 - rerun `./scripts/deploy-function-code.sh` and verify trigger sync succeeds
 
 For this sample, the most reliable model is `azd` for infrastructure plus a separate zip deployment for code.
+
+### `KeyBasedAuthenticationNotPermitted` during workflow code deploy
+
+If the GitHub Actions job fails in `./scripts/deploy-function-code.sh` with:
+
+```text
+Key based authentication is not permitted on this storage account.
+```
+
+the Function App storage account is blocking the zip deployment path. This sample's deployment flow expects shared key access to remain enabled on the Function App storage account because Linux Function App package deployment still uses that storage path.
+
+Fix:
+
+- make sure `infra/main.bicep` sets `allowSharedKeyAccess: true` on the Function App storage account
+- rerun the infrastructure step so the storage account is updated
+- rerun the workflow
