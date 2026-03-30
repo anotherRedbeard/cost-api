@@ -1,0 +1,6 @@
+name: cost-api-demo
+metadata:
+  template: cost-api-demo@0.0.1-beta
+infra:
+  provider: bicep
+  path: infra

@@ -1,0 +1,9 @@
+.git*
+.venv/
+.python_packages/
+.azure/
+.vscode/
+tests/
+infra/
+README.md
+local.settings.sample.json

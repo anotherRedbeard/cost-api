@@ -1,0 +1,70 @@
+name: Deploy Azure Cost API
+
+on:
+  workflow_dispatch:
+    inputs:
+      azd_environment:
+        description: AZD environment name
+        required: true
+        default: costdemo
+      azure_location:
+        description: Azure region for infrastructure
+        required: true
+        default: eastus2
+      cost_subscription_id:
+        description: Subscription ID to query with the deployed Function App
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      AZD_ENV_NAME: ${{ inputs.azd_environment }}
+      AZURE_LOCATION: ${{ inputs.azure_location }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      COST_SUBSCRIPTION_ID: ${{ inputs.cost_subscription_id }}
+      PYTHON_BIN: python
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Azure Developer CLI
+        uses: Azure/setup-azd@v2
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Use Azure CLI auth for azd
+        run: azd config set auth.useAzCliAuth true
+
+      - name: Make scripts executable
+        run: chmod +x scripts/*.sh
+
+      - name: Provision infrastructure
+        run: ./scripts/provision-infra.sh
+
+      - name: Package Function App
+        run: ./scripts/package-function-code.sh
+
+      - name: Deploy Function App code
+        run: ./scripts/deploy-function-code.sh
+
+      - name: Grant Cost Management Reader
+        run: ./scripts/assign-cost-reader.sh
+
+      - name: Smoke test deployment
+        run: ./scripts/smoke-test.sh

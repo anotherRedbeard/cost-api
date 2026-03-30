@@ -1,0 +1,13 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "AzureWebJobsFeatureFlags": "EnableWorkerIndexing",
+    "COST_SUBSCRIPTION_ID": "",
+    "COST_QUERY_TIMEFRAME": "MonthToDate",
+    "COST_QUERY_GRANULARITY": "Daily",
+    "PYTHON_ENABLE_INIT_INDEXING": "1",
+    "languageWorkers__python__defaultExecutablePath": "/full/path/to/your/project/.venv/bin/python"
+  }
+}

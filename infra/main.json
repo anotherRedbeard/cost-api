@@ -1,0 +1,209 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.41.2.15936",
+      "templateHash": "9126774419204168169"
+    }
+  },
+  "parameters": {
+    "environmentName": {
+      "type": "string"
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]"
+    },
+    "targetCostSubscriptionId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional default subscription ID that the function uses when subscriptionId is not supplied in the request."
+      }
+    },
+    "defaultTimeframe": {
+      "type": "string",
+      "defaultValue": "MonthToDate",
+      "allowedValues": [
+        "MonthToDate",
+        "TheLastMonth",
+        "TheLastWeek",
+        "TheLastYear",
+        "WeekToDate",
+        "BillingMonthToDate",
+        "TheLastBillingMonth"
+      ]
+    },
+    "defaultGranularity": {
+      "type": "string",
+      "defaultValue": "Daily",
+      "allowedValues": [
+        "Daily",
+        "None"
+      ]
+    }
+  },
+  "variables": {
+    "suffix": "[uniqueString(subscription().subscriptionId, resourceGroup().id, parameters('environmentName'))]",
+    "functionAppName": "[take(format('func-{0}-cost-{1}', parameters('environmentName'), variables('suffix')), 60)]",
+    "storageAccountName": "[toLower(take(format('st{0}', variables('suffix')), 24))]",
+    "hostingPlanName": "[format('plan-{0}-cost', parameters('environmentName'))]",
+    "appInsightsName": "[take(format('appi-{0}-cost-{1}', parameters('environmentName'), variables('suffix')), 60)]",
+    "workspaceName": "[take(format('log-{0}-cost-{1}', parameters('environmentName'), variables('suffix')), 63)]",
+    "tags": {
+      "azd-env-name": "[parameters('environmentName')]",
+      "app": "cost-api-demo"
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-05-01",
+      "name": "[variables('storageAccountName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "kind": "StorageV2",
+      "properties": {
+        "accessTier": "Hot",
+        "allowBlobPublicAccess": false,
+        "minimumTlsVersion": "TLS1_2",
+        "supportsHttpsTrafficOnly": true
+      }
+    },
+    {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2023-09-01",
+      "name": "[variables('workspaceName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "retentionInDays": 30,
+        "sku": {
+          "name": "PerGB2018"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Insights/components",
+      "apiVersion": "2020-02-02",
+      "name": "[variables('appInsightsName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "kind": "web",
+      "properties": {
+        "Application_Type": "web",
+        "WorkspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', variables('workspaceName'))]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('workspaceName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2023-12-01",
+      "name": "[variables('hostingPlanName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "sku": {
+        "name": "Y1",
+        "tier": "Dynamic"
+      },
+      "kind": "functionapp",
+      "properties": {
+        "reserved": true
+      }
+    },
+    {
+      "type": "Microsoft.Web/sites",
+      "apiVersion": "2023-12-01",
+      "name": "[variables('functionAppName')]",
+      "location": "[parameters('location')]",
+      "kind": "functionapp,linux",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "tags": "[union(variables('tags'), createObject('azd-service-name', 'api'))]",
+      "properties": {
+        "httpsOnly": true,
+        "reserved": true,
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('hostingPlanName'))]",
+        "siteConfig": {
+          "alwaysOn": false,
+          "ftpsState": "Disabled",
+          "linuxFxVersion": "Python|3.11",
+          "minTlsVersion": "1.2",
+          "appSettings": [
+            {
+              "name": "AzureWebJobsStorage",
+              "value": "[format('DefaultEndpointsProtocol=https;AccountName={0};AccountKey={1};EndpointSuffix={2}', variables('storageAccountName'), listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2023-05-01').keys[0].value, environment().suffixes.storage)]"
+            },
+            {
+              "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
+              "value": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName')), '2020-02-02').ConnectionString]"
+            },
+            {
+              "name": "AzureWebJobsFeatureFlags",
+              "value": "EnableWorkerIndexing"
+            },
+            {
+              "name": "COST_QUERY_GRANULARITY",
+              "value": "[parameters('defaultGranularity')]"
+            },
+            {
+              "name": "COST_QUERY_TIMEFRAME",
+              "value": "[parameters('defaultTimeframe')]"
+            },
+            {
+              "name": "COST_SUBSCRIPTION_ID",
+              "value": "[parameters('targetCostSubscriptionId')]"
+            },
+            {
+              "name": "ENABLE_ORYX_BUILD",
+              "value": "true"
+            },
+            {
+              "name": "FUNCTIONS_EXTENSION_VERSION",
+              "value": "~4"
+            },
+            {
+              "name": "FUNCTIONS_WORKER_RUNTIME",
+              "value": "python"
+            },
+            {
+              "name": "PYTHON_ENABLE_INIT_INDEXING",
+              "value": "1"
+            },
+            {
+              "name": "SCM_DO_BUILD_DURING_DEPLOYMENT",
+              "value": "true"
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Insights/components', variables('appInsightsName'))]",
+        "[resourceId('Microsoft.Web/serverfarms', variables('hostingPlanName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "AZURE_FUNCTION_APP_NAME": {
+      "type": "string",
+      "value": "[variables('functionAppName')]"
+    },
+    "FUNCTION_APP_PRINCIPAL_ID": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2023-12-01', 'full').identity.principalId]"
+    },
+    "SERVICE_API_ENDPOINT_URL": {
+      "type": "string",
+      "value": "[format('https://{0}/api', reference(resourceId('Microsoft.Web/sites', variables('functionAppName')), '2023-12-01').defaultHostName)]"
+    }
+  }
+}
