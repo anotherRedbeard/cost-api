@@ -13,9 +13,9 @@ require_cmd azd
 select_or_create_azd_env "${1:-${AZD_ENV_NAME:-}}"
 load_azd_env
 
+require_azd_value AZURE_SUBSCRIPTION_ID
 require_azd_value AZURE_RESOURCE_GROUP
 require_azd_value AZURE_FUNCTION_APP_NAME
-require_azd_value COST_SUBSCRIPTION_ID
 
 principal_id="${FUNCTION_APP_PRINCIPAL_ID:-}"
 
@@ -32,7 +32,7 @@ if [ -z "$principal_id" ]; then
   exit 1
 fi
 
-scope="/subscriptions/${COST_SUBSCRIPTION_ID}"
+scope="${COST_ROLE_SCOPE:-/subscriptions/${AZURE_SUBSCRIPTION_ID}}"
 assignment_count="$(az role assignment list \
   --assignee-object-id "$principal_id" \
   --scope "$scope" \

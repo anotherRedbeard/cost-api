@@ -195,7 +195,6 @@ az account show --query '{name:name,id:id}' -o json
 export AZD_ENV_NAME=costdemo
 export AZURE_SUBSCRIPTION_ID=<deployment-subscription-id>
 export AZURE_LOCATION=eastus2
-export COST_SUBSCRIPTION_ID=<target-cost-subscription-id>
 ```
 
 Optional defaults:
@@ -203,6 +202,12 @@ Optional defaults:
 ```bash
 export COST_QUERY_TIMEFRAME=MonthToDate
 export COST_QUERY_GRANULARITY=None
+```
+
+Optional if you want the app to fall back to a default subscription when a request does not provide `subscriptionId`:
+
+```bash
+export COST_SUBSCRIPTION_ID=<optional-default-subscription-id>
 ```
 
 ### 3. Provision infrastructure with `azd`
@@ -249,7 +254,12 @@ This performs the code deployment to the Flex Consumption app, calls `syncfuncti
 ./scripts/assign-cost-reader.sh
 ```
 
-If the deployment subscription and the target cost subscription are the same, use the same subscription ID for both.
+By default, this grants `Cost Management Reader` on the deployment subscription. To grant access at a broader or different scope, set `COST_ROLE_SCOPE` first. For example:
+
+```bash
+export COST_ROLE_SCOPE=/providers/Microsoft.Management/managementGroups/<management-group-id>
+./scripts/assign-cost-reader.sh
+```
 
 ### 7. Smoke test the deployed app
 
@@ -260,8 +270,14 @@ If the deployment subscription and the target cost subscription are the same, us
 That script validates:
 
 - `health` returns `200`
-- the deployed Function App can call Cost Management for `COST_SUBSCRIPTION_ID`
-- the response includes basic cost data such as `currency`, `totalCost`, and `rowCount`
+- the cost endpoint returns a controlled `400` when `subscriptionId` is omitted
+
+If you also want the smoke test to run a real cost query, set a target just for the test:
+
+```bash
+export SMOKE_TEST_SUBSCRIPTION_ID=<subscription-id>
+./scripts/smoke-test.sh
+```
 
 ## GitHub Actions pipeline
 
@@ -286,7 +302,6 @@ From GitHub Actions, run `Deploy Azure Cost API` and provide:
 
 - `azd_environment`
 - `azure_location`
-- `cost_subscription_id`
 
 The workflow then runs:
 
