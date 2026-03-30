@@ -11,9 +11,6 @@ on:
         description: Azure region for infrastructure
         required: true
         default: eastus2
-      cost_subscription_id:
-        description: Subscription ID to query with the deployed Function App
-        required: true
 
 permissions:
   id-token: write
@@ -26,7 +23,7 @@ jobs:
       AZD_ENV_NAME: ${{ inputs.azd_environment }}
       AZURE_LOCATION: ${{ inputs.azure_location }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      COST_SUBSCRIPTION_ID: ${{ inputs.cost_subscription_id }}
+      COST_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       PYTHON_BIN: python
 
     steps:
