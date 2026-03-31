@@ -213,7 +213,6 @@ resource functionAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     COST_QUERY_TIMEFRAME: defaultTimeframe
     COST_SUBSCRIPTION_ID: subscription().subscriptionId
     FUNCTIONS_EXTENSION_VERSION: '~4'
-    FUNCTIONS_WORKER_RUNTIME: 'python'
     PYTHON_ENABLE_INIT_INDEXING: '1'
   }
 }
