@@ -1,5 +1,7 @@
 import json
+import os
 import unittest
+from datetime import date
 from unittest.mock import Mock, patch
 
 import azure.functions as func
@@ -8,12 +10,18 @@ from function_app import (
     CostManagementApiError,
     CostManagementConfigError,
     _build_query_definition,
+    _build_monthly_report_filename,
     _clear_cached_cost_queries,
+    _get_blob_service_client,
     _normalize_granularity,
     _normalize_query_result,
     _query_subscription_cost,
     _render_html_report,
+    _resolve_previous_month_range,
     _resolve_time_period,
+    _send_email_attachment,
+    _upload_report_to_blob,
+    monthly_cost_report,
     subscription_cost,
 )
 
@@ -108,6 +116,130 @@ class FunctionAppHelpersTests(unittest.TestCase):
         self.assertIn("Azure Cost Report", html_report)
         self.assertIn("sub-123", html_report)
         self.assertIn("42.5", html_report)
+
+    def test_previous_month_range_uses_full_previous_calendar_month(self) -> None:
+        self.assertEqual(
+            _resolve_previous_month_range(date(2026, 3, 31)),
+            ("2026-02-01", "2026-02-28"),
+        )
+        self.assertEqual(
+            _resolve_previous_month_range(date(2026, 1, 10)),
+            ("2025-12-01", "2025-12-31"),
+        )
+
+    def test_build_monthly_report_filename_uses_year_month(self) -> None:
+        self.assertEqual(
+            _build_monthly_report_filename("2026-02-01"),
+            "cost-report-2026-02.html",
+        )
+
+    def test_send_email_attachment_uses_smtp(self) -> None:
+        smtp_client = Mock()
+        smtp_context_manager = Mock()
+        smtp_context_manager.__enter__ = Mock(return_value=smtp_client)
+        smtp_context_manager.__exit__ = Mock(return_value=False)
+
+        with patch.dict(
+            os.environ,
+            {
+                "SMTP_HOST": "smtp.example.com",
+                "SMTP_PORT": "587",
+                "SMTP_FROM": "reports@example.com",
+                "SMTP_USERNAME": "reports@example.com",
+                "SMTP_PASSWORD": "secret",
+                "SMTP_STARTTLS": "true",
+            },
+            clear=False,
+        ), patch(
+            "function_app.smtplib.SMTP",
+            return_value=smtp_context_manager,
+        ):
+            _send_email_attachment(
+                recipient="andrew.redman@microsoft.com",
+                subject="Azure Cost Report - 2026-02",
+                attachment_name="cost-report-2026-02.html",
+                attachment_body="<html>report</html>",
+            )
+
+        smtp_client.starttls.assert_called_once()
+        smtp_client.login.assert_called_once_with("reports@example.com", "secret")
+        smtp_client.send_message.assert_called_once()
+
+    def test_get_blob_service_client_prefers_connection_string(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+            },
+            clear=False,
+        ), patch(
+            "function_app.BlobServiceClient.from_connection_string"
+        ) as from_connection_string:
+            _get_blob_service_client()
+
+        from_connection_string.assert_called_once_with("UseDevelopmentStorage=true")
+
+    def test_upload_report_to_blob_writes_html(self) -> None:
+        container_client = Mock()
+        blob_service_client = Mock()
+        blob_service_client.get_container_client.return_value = container_client
+
+        with patch(
+            "function_app._get_blob_service_client",
+            return_value=blob_service_client,
+        ):
+            _upload_report_to_blob(
+                container_name="monthly-cost-reports",
+                blob_name="cost-report-2026-02.html",
+                report_html="<html>report</html>",
+            )
+
+        container_client.create_container.assert_called_once()
+        container_client.upload_blob.assert_called_once_with(
+            name="cost-report-2026-02.html",
+            data=b"<html>report</html>",
+            overwrite=True,
+            content_type="text/html; charset=utf-8",
+        )
+
+    def test_monthly_cost_report_uploads_blob_when_configured(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "MONTHLY_REPORT_DELIVERY": "blob",
+                "MONTHLY_REPORT_SUBSCRIPTION_ID": "sub-123",
+            },
+            clear=False,
+        ), patch(
+            "function_app._resolve_previous_month_range",
+            return_value=("2026-02-01", "2026-02-28"),
+        ), patch(
+            "function_app._query_subscription_cost",
+            return_value={
+                "subscriptionId": "sub-123",
+                "timeframe": "Custom",
+                "granularity": "None",
+                "currency": "USD",
+                "totalCost": 42.5,
+                "breakdown": [{"totalCost": 42.5, "currency": "USD"}],
+            },
+        ) as query_subscription_cost, patch(
+            "function_app._upload_report_to_blob"
+        ) as upload_report_to_blob:
+            monthly_cost_report(Mock(past_due=False))
+
+        query_subscription_cost.assert_called_once_with(
+            subscription_id="sub-123",
+            timeframe="MonthToDate",
+            granularity="None",
+            start_date="2026-02-01",
+            end_date="2026-02-28",
+        )
+        upload_report_to_blob.assert_called_once_with(
+            container_name="monthly-cost-reports",
+            blob_name="cost-report-2026-02.html",
+            report_html=unittest.mock.ANY,
+        )
 
     def test_subscription_cost_requires_request_subscription_id(self) -> None:
         request = func.HttpRequest(

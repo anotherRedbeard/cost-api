@@ -283,6 +283,13 @@
         "COST_QUERY_GRANULARITY": "[parameters('defaultGranularity')]",
         "COST_QUERY_TIMEFRAME": "[parameters('defaultTimeframe')]",
         "FUNCTIONS_EXTENSION_VERSION": "~4",
+        "MONTHLY_REPORT_BLOB_CONTAINER": "monthly-cost-reports",
+        "MONTHLY_REPORT_DELIVERY": "blob",
+        "MONTHLY_REPORT_GRANULARITY": "[parameters('defaultGranularity')]",
+        "MONTHLY_REPORT_RECIPIENT": "andrew.redman@microsoft.com",
+        "MONTHLY_REPORT_RUN_ON_STARTUP": "false",
+        "MONTHLY_REPORT_SCHEDULE": "0 0 9 1 * *",
+        "MONTHLY_REPORT_SUBSCRIPTION_ID": "[subscription().subscriptionId]",
         "PYTHON_ENABLE_INIT_INDEXING": "1"
       },
       "dependsOn": [

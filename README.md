@@ -267,7 +267,7 @@ If `AZURE_RESOURCE_GROUP` and `AZURE_FUNCTION_APP_NAME` are already exported, th
 That script validates:
 
 - `health` returns `200`
-- the cost endpoint works against the Function App's deployed subscription by default
+- the cost endpoint returns a validation error when `subscriptionId` is omitted
 
 If you also want the smoke test to run a real cost query, set a target just for the test:
 
@@ -284,6 +284,43 @@ export AZURE_FUNCTION_APP_NAME=<function-app-name>
 export SMOKE_TEST_SUBSCRIPTION_ID=<subscription-id>
 PYTHON_BIN=python3 ./scripts/smoke-test.sh
 ```
+
+## Monthly report delivery
+
+The Function App includes a monthly timer trigger in `function_app.py` that:
+
+- runs on the first day of each month at `09:00` UTC
+- queries the previous calendar month using the existing Cost Management logic
+- renders the existing HTML report
+- writes that HTML file into blob storage by default
+- can also email that HTML file to `andrew.redman@microsoft.com`
+
+Infrastructure now sets these non-secret app settings automatically:
+
+- `MONTHLY_REPORT_SCHEDULE=0 0 9 1 * *`
+- `MONTHLY_REPORT_DELIVERY=blob`
+- `MONTHLY_REPORT_SUBSCRIPTION_ID=<deployment subscription>`
+- `MONTHLY_REPORT_BLOB_CONTAINER=monthly-cost-reports`
+- `MONTHLY_REPORT_RECIPIENT=andrew.redman@microsoft.com`
+- `MONTHLY_REPORT_GRANULARITY=None`
+- `MONTHLY_REPORT_RUN_ON_STARTUP=false`
+
+To test without email, leave `MONTHLY_REPORT_DELIVERY=blob` and inspect the
+`monthly-cost-reports` container in the Function App storage account.
+
+If you want to force one immediate execution after deployment, temporarily set
+`MONTHLY_REPORT_RUN_ON_STARTUP=true`, restart the Function App once, then set it
+back to `false`.
+
+If you later want email delivery instead, set `MONTHLY_REPORT_DELIVERY=email`
+and configure these Function App settings with your SMTP details:
+
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USERNAME`
+- `SMTP_PASSWORD`
+- `SMTP_FROM`
+- `SMTP_STARTTLS`
 
 ## GitHub Actions pipeline
 

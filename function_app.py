@@ -2,20 +2,26 @@ import html
 import json
 import logging
 import os
+import smtplib
+import ssl
 import time
+from email.message import EmailMessage
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
 import azure.functions as func
 import requests
+from azure.identity import DefaultAzureCredential
+from azure.storage.blob import BlobServiceClient
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 
 MANAGEMENT_SCOPE = "https://management.azure.com/.default"
 COST_QUERY_API_VERSION = "2025-03-01"
 COST_QUERY_CACHE_TTL_SECONDS = 300
+DEFAULT_MONTHLY_REPORT_RECIPIENT = "andrew.redman@microsoft.com"
 ALLOWED_TIMEFRAMES = {
     "BillingMonthToDate": "BillingMonthToDate",
     "Custom": "Custom",
@@ -85,6 +91,21 @@ def _get_int_setting(name: str, default: int) -> int:
     except ValueError:
         logging.warning("Invalid integer for %s: %s", name, raw_value)
         return default
+
+
+def _get_bool_setting(name: str, default: bool) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+
+    normalized = raw_value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+
+    logging.warning("Invalid boolean for %s: %s", name, raw_value)
+    return default
 
 
 def _build_cache_key(
@@ -486,6 +507,195 @@ def _render_html_report(result: Dict[str, Any]) -> str:
   </table>
 </body>
 </html>"""
+
+
+def _resolve_previous_month_range(
+    reference_date: Optional[date] = None,
+) -> Tuple[str, str]:
+    current_date = reference_date or datetime.now(timezone.utc).date()
+    first_day_of_current_month = current_date.replace(day=1)
+    last_day_of_previous_month = first_day_of_current_month - timedelta(days=1)
+    first_day_of_previous_month = last_day_of_previous_month.replace(day=1)
+    return (
+        first_day_of_previous_month.isoformat(),
+        last_day_of_previous_month.isoformat(),
+    )
+
+
+def _build_monthly_report_filename(start_date: str) -> str:
+    return f"cost-report-{start_date[:7]}.html"
+
+
+def _get_blob_service_client() -> BlobServiceClient:
+    storage_connection_string = os.getenv("AzureWebJobsStorage")
+    if storage_connection_string:
+        return BlobServiceClient.from_connection_string(storage_connection_string)
+
+    storage_account_name = _first_value(os.getenv("AzureWebJobsStorage__accountName"))
+    if not storage_account_name:
+        raise CostManagementConfigError(
+            "AzureWebJobsStorage or AzureWebJobsStorage__accountName must be configured "
+            "for blob delivery."
+        )
+
+    managed_identity_client_id = _first_value(os.getenv("AzureWebJobsStorage__clientId"))
+    credential = DefaultAzureCredential(
+        exclude_interactive_browser_credential=True,
+        managed_identity_client_id=managed_identity_client_id,
+    )
+    return BlobServiceClient(
+        account_url=f"https://{storage_account_name}.blob.core.windows.net",
+        credential=credential,
+    )
+
+
+def _upload_report_to_blob(
+    container_name: str,
+    blob_name: str,
+    report_html: str,
+) -> None:
+    blob_service_client = _get_blob_service_client()
+    container_client = blob_service_client.get_container_client(container_name)
+    try:
+        container_client.create_container()
+    except Exception:
+        pass
+
+    container_client.upload_blob(
+        name=blob_name,
+        data=report_html.encode("utf-8"),
+        overwrite=True,
+        content_type="text/html; charset=utf-8",
+    )
+
+
+def _send_email_attachment(
+    recipient: str,
+    subject: str,
+    attachment_name: str,
+    attachment_body: str,
+) -> None:
+    smtp_host = _first_value(os.getenv("SMTP_HOST"))
+    smtp_from = _first_value(os.getenv("SMTP_FROM"), os.getenv("SMTP_USERNAME"))
+    smtp_username = _first_value(os.getenv("SMTP_USERNAME"))
+    smtp_password = os.getenv("SMTP_PASSWORD")
+    smtp_port = _get_int_setting("SMTP_PORT", 587)
+    smtp_starttls = _get_bool_setting("SMTP_STARTTLS", smtp_port != 465)
+
+    if not smtp_host:
+        raise CostManagementConfigError("SMTP_HOST must be configured for monthly email.")
+    if not smtp_from:
+        raise CostManagementConfigError(
+            "SMTP_FROM or SMTP_USERNAME must be configured for monthly email."
+        )
+    if smtp_password and not smtp_username:
+        raise CostManagementConfigError(
+            "SMTP_USERNAME is required when SMTP_PASSWORD is configured."
+        )
+
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = smtp_from
+    message["To"] = recipient
+    message.set_content(
+        "Attached is your monthly Azure Cost Management report."
+    )
+    message.add_attachment(
+        attachment_body.encode("utf-8"),
+        maintype="text",
+        subtype="html",
+        filename=attachment_name,
+    )
+
+    ssl_context = ssl.create_default_context()
+
+    if smtp_port == 465:
+        with smtplib.SMTP_SSL(
+            smtp_host,
+            smtp_port,
+            timeout=30,
+            context=ssl_context,
+        ) as smtp_client:
+            if smtp_username and smtp_password:
+                smtp_client.login(smtp_username, smtp_password)
+            smtp_client.send_message(message)
+        return
+
+    with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as smtp_client:
+        if smtp_starttls:
+            smtp_client.starttls(context=ssl_context)
+        if smtp_username and smtp_password:
+            smtp_client.login(smtp_username, smtp_password)
+        smtp_client.send_message(message)
+
+
+@app.timer_trigger(
+    schedule="%MONTHLY_REPORT_SCHEDULE%",
+    arg_name="monthly_timer",
+    run_on_startup=_get_bool_setting("MONTHLY_REPORT_RUN_ON_STARTUP", False),
+    use_monitor=True,
+)
+def monthly_cost_report(monthly_timer: func.TimerRequest) -> None:
+    if monthly_timer.past_due:
+        logging.warning("The monthly cost report timer trigger is running late.")
+
+    subscription_id = _first_value(os.getenv("MONTHLY_REPORT_SUBSCRIPTION_ID"))
+    if not subscription_id:
+        raise CostManagementConfigError(
+            "MONTHLY_REPORT_SUBSCRIPTION_ID must be configured for the monthly timer."
+        )
+
+    recipient = _first_value(
+        os.getenv("MONTHLY_REPORT_RECIPIENT"),
+        DEFAULT_MONTHLY_REPORT_RECIPIENT,
+    )
+    granularity = _first_value(
+        os.getenv("MONTHLY_REPORT_GRANULARITY"),
+        os.getenv("COST_QUERY_GRANULARITY"),
+        "None",
+    )
+    start_date, end_date = _resolve_previous_month_range()
+    result = _query_subscription_cost(
+        subscription_id=subscription_id,
+        timeframe="MonthToDate",
+        granularity=granularity,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    report_html = _render_html_report(result)
+    report_filename = _build_monthly_report_filename(start_date)
+    report_subject = f"Azure Cost Report - {start_date[:7]}"
+    delivery = _first_value(os.getenv("MONTHLY_REPORT_DELIVERY"), "blob")
+
+    if delivery == "blob":
+        container_name = _first_value(
+            os.getenv("MONTHLY_REPORT_BLOB_CONTAINER"),
+            "monthly-cost-reports",
+        )
+        _upload_report_to_blob(
+            container_name=container_name,
+            blob_name=report_filename,
+            report_html=report_html,
+        )
+        logging.info(
+            "Uploaded monthly cost report %s to blob container %s.",
+            report_filename,
+            container_name,
+        )
+        return
+
+    if delivery != "email":
+        raise CostManagementConfigError(
+            "MONTHLY_REPORT_DELIVERY must be either 'blob' or 'email'."
+        )
+
+    _send_email_attachment(
+        recipient=recipient,
+        subject=report_subject,
+        attachment_name=report_filename,
+        attachment_body=report_html,
+    )
+    logging.info("Sent monthly cost report to %s for %s.", recipient, start_date[:7])
 
 
 @app.route(route="health", methods=["GET"])
