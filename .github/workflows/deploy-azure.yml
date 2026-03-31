@@ -20,7 +20,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      AZD_ENV_NAME: cost-api-${{ github.run_id }}
+      AZD_ENV_NAME: costdemo
       AZURE_RESOURCE_GROUP: ${{ inputs.azure_resource_group }}
       AZURE_LOCATION: ${{ inputs.azure_location }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}

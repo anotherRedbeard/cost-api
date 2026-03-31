@@ -309,7 +309,7 @@ From GitHub Actions, run `Deploy Azure Cost API` and provide:
 - `azure_resource_group`
 - `azure_location`
 
-The workflow manages its own temporary `azd` environment name internally, so you do not need to provide one.
+The workflow targets the shared `costdemo` `azd` environment so repeated runs update the existing deployment instead of creating duplicate Azure resources.
 
 The workflow then runs:
 
