@@ -3,10 +3,6 @@ name: Deploy Azure Cost API
 on:
   workflow_dispatch:
     inputs:
-      azd_environment:
-        description: AZD environment name
-        required: true
-        default: costdemo
       azure_resource_group:
         description: Azure resource group name to provision into
         required: true
@@ -24,7 +20,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      AZD_ENV_NAME: ${{ inputs.azd_environment }}
+      AZD_ENV_NAME: cost-api-${{ github.run_id }}
       AZURE_RESOURCE_GROUP: ${{ inputs.azure_resource_group }}
       AZURE_LOCATION: ${{ inputs.azure_location }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}

@@ -306,9 +306,10 @@ The workflow uses `azure/login` with OpenID Connect, so the Azure application be
 
 From GitHub Actions, run `Deploy Azure Cost API` and provide:
 
-- `azd_environment`
 - `azure_resource_group`
 - `azure_location`
+
+The workflow manages its own temporary `azd` environment name internally, so you do not need to provide one.
 
 The workflow then runs:
 
