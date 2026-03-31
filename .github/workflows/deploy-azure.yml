@@ -7,6 +7,10 @@ on:
         description: AZD environment name
         required: true
         default: costdemo
+      azure_resource_group:
+        description: Azure resource group name to provision into
+        required: true
+        default: costdemo-red-rg
       azure_location:
         description: Azure region for infrastructure
         required: true
@@ -21,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       AZD_ENV_NAME: ${{ inputs.azd_environment }}
+      AZURE_RESOURCE_GROUP: ${{ inputs.azure_resource_group }}
       AZURE_LOCATION: ${{ inputs.azure_location }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       PYTHON_BIN: python

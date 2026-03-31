@@ -194,6 +194,7 @@ az account show --query '{name:name,id:id}' -o json
 ```bash
 export AZD_ENV_NAME=costdemo
 export AZURE_SUBSCRIPTION_ID=<deployment-subscription-id>
+export AZURE_RESOURCE_GROUP=costdemo-red-rg
 export AZURE_LOCATION=eastus2
 ```
 
@@ -295,6 +296,7 @@ The workflow uses `azure/login` with OpenID Connect, so the Azure application be
 From GitHub Actions, run `Deploy Azure Cost API` and provide:
 
 - `azd_environment`
+- `azure_resource_group`
 - `azure_location`
 
 The workflow then runs:
