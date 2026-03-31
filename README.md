@@ -382,6 +382,9 @@ curl "${BASE_URL}/cost/subscription?code=${COST_KEY}&subscriptionId=<target-cost
 curl "${BASE_URL}/cost/subscription?code=${COST_KEY}"
 ```
 
+This should now return `400` immediately because every HTTP request must supply
+`subscriptionId` in the query string or JSON body.
+
 ## Suggested deployment verification checklist
 
 After deployment, verify all of the following:
@@ -464,8 +467,9 @@ This sample now targets Flex Consumption with managed-identity-backed storage co
 
 If your organization blocks shared keys, rerun the infrastructure step after pulling the Flex Consumption changes so the Function App and deployment storage are recreated with the new model.
 
-### Default subscription behavior
+### Required subscription behavior
 
-When the function runs in Azure and the request omits `subscriptionId`, the app now defaults to the same Azure subscription it was deployed into.
+The HTTP API requires `subscriptionId` on every request.
 
-If you supply `subscriptionId` in the query string or request body, that request-specific value still wins.
+If it is missing from both the query string and JSON body, the function returns
+`400` without attempting the Azure Cost Management call.

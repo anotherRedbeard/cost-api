@@ -2,6 +2,7 @@ import html
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -14,6 +15,7 @@ app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 
 MANAGEMENT_SCOPE = "https://management.azure.com/.default"
 COST_QUERY_API_VERSION = "2025-03-01"
+COST_QUERY_CACHE_TTL_SECONDS = 300
 ALLOWED_TIMEFRAMES = {
     "BillingMonthToDate": "BillingMonthToDate",
     "Custom": "Custom",
@@ -39,6 +41,9 @@ class CostManagementApiError(Exception):
 
     def __str__(self) -> str:
         return self.message
+
+
+_COST_QUERY_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
 
 
 def _load_request_payload(req: func.HttpRequest) -> Dict[str, Any]:
@@ -70,11 +75,74 @@ def _first_value(*values: Optional[str]) -> Optional[str]:
     return None
 
 
-def _json_response(payload: Dict[str, Any], status_code: int = 200) -> func.HttpResponse:
+def _get_int_setting(name: str, default: int) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+
+    try:
+        return int(raw_value)
+    except ValueError:
+        logging.warning("Invalid integer for %s: %s", name, raw_value)
+        return default
+
+
+def _build_cache_key(
+    subscription_id: str,
+    timeframe: str,
+    granularity: str,
+    start_date: Optional[str],
+    end_date: Optional[str],
+) -> str:
+    return json.dumps(
+        {
+            "subscriptionId": subscription_id,
+            "timeframe": timeframe,
+            "granularity": granularity,
+            "startDate": start_date,
+            "endDate": end_date,
+        },
+        sort_keys=True,
+    )
+
+
+def _get_cached_cost_query(cache_key: str) -> Optional[Dict[str, Any]]:
+    cached_entry = _COST_QUERY_CACHE.get(cache_key)
+    if not cached_entry:
+        return None
+
+    expires_at, cached_result = cached_entry
+    if time.time() >= expires_at:
+        _COST_QUERY_CACHE.pop(cache_key, None)
+        return None
+
+    return cached_result
+
+
+def _store_cached_cost_query(cache_key: str, result: Dict[str, Any]) -> None:
+    ttl_seconds = _get_int_setting(
+        "COST_QUERY_CACHE_TTL_SECONDS", COST_QUERY_CACHE_TTL_SECONDS
+    )
+    if ttl_seconds <= 0:
+        return
+
+    _COST_QUERY_CACHE[cache_key] = (time.time() + ttl_seconds, result)
+
+
+def _clear_cached_cost_queries() -> None:
+    _COST_QUERY_CACHE.clear()
+
+
+def _json_response(
+    payload: Dict[str, Any],
+    status_code: int = 200,
+    headers: Optional[Dict[str, str]] = None,
+) -> func.HttpResponse:
     return func.HttpResponse(
         body=json.dumps(payload, indent=2),
         status_code=status_code,
         mimetype="application/json",
+        headers=headers,
     )
 
 
@@ -83,12 +151,13 @@ def _file_response(
     mimetype: str,
     filename: str,
     status_code: int = 200,
+    disposition: str = "attachment",
 ) -> func.HttpResponse:
     return func.HttpResponse(
         body=body,
         status_code=status_code,
         mimetype=mimetype,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'{disposition}; filename="{filename}"'},
     )
 
 
@@ -304,6 +373,17 @@ def _query_subscription_cost(
         granularity=normalized_granularity,
         time_period=time_period,
     )
+    cache_key = _build_cache_key(
+        subscription_id=subscription_id,
+        timeframe=query_timeframe,
+        granularity=normalized_granularity,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    cached_result = _get_cached_cost_query(cache_key)
+    if cached_result is not None:
+        return cached_result
+
     headers = {
         "Authorization": f"Bearer {_get_access_token()}",
         "Content-Type": "application/json",
@@ -318,13 +398,15 @@ def _query_subscription_cost(
             response = session.post(next_url, json=request_body, headers=headers, timeout=30)
 
             if response.status_code == 204:
-                return _normalize_query_result(
+                result = _normalize_query_result(
                     subscription_id=subscription_id,
                     timeframe=query_timeframe,
                     granularity=normalized_granularity,
                     time_period=time_period,
                     response_properties={"columns": [], "rows": []},
                 )
+                _store_cached_cost_query(cache_key, result)
+                return result
 
             if response.status_code >= 400:
                 raise _build_api_error(response)
@@ -338,13 +420,15 @@ def _query_subscription_cost(
             combined_rows.extend(properties.get("rows", []))
             next_url = properties.get("nextLink")
 
-    return _normalize_query_result(
+    result = _normalize_query_result(
         subscription_id=subscription_id,
         timeframe=query_timeframe,
         granularity=normalized_granularity,
         time_period=time_period,
         response_properties={"columns": combined_columns, "rows": combined_rows},
     )
+    _store_cached_cost_query(cache_key, result)
+    return result
 
 
 def _render_html_report(result: Dict[str, Any]) -> str:
@@ -416,7 +500,6 @@ def subscription_cost(req: func.HttpRequest) -> func.HttpResponse:
         subscription_id = _first_value(
             req.params.get("subscriptionId"),
             payload.get("subscriptionId"),
-            os.getenv("COST_SUBSCRIPTION_ID"),
         )
         timeframe = _first_value(
             req.params.get("timeframe"),
@@ -450,8 +533,8 @@ def subscription_cost(req: func.HttpRequest) -> func.HttpResponse:
 
         if not subscription_id:
             raise CostManagementConfigError(
-                "A subscription ID is required. Supply subscriptionId in the query string, "
-                "request body, or configure the app's default subscription."
+                "A subscription ID is required. Supply subscriptionId in the query string "
+                "or request body."
             )
 
         result = _query_subscription_cost(
@@ -467,6 +550,7 @@ def subscription_cost(req: func.HttpRequest) -> func.HttpResponse:
                 body=_render_html_report(result),
                 mimetype="text/html",
                 filename="cost-report.html",
+                disposition="inline",
             )
 
         if output_format.lower() != "json":
@@ -493,7 +577,15 @@ def subscription_cost(req: func.HttpRequest) -> func.HttpResponse:
         if exc.details:
             response_payload["details"] = exc.details
 
-        return _json_response(response_payload, status_code=exc.status_code)
+        response_headers: Optional[Dict[str, str]] = None
+        if exc.retry_after:
+            response_headers = {"Retry-After": exc.retry_after}
+
+        return _json_response(
+            response_payload,
+            status_code=exc.status_code,
+            headers=response_headers,
+        )
     except Exception:
         logging.exception("Unexpected failure while querying Azure Cost Management.")
         return _json_response(

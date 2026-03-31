@@ -31,7 +31,7 @@
     },
     "defaultGranularity": {
       "type": "string",
-      "defaultValue": "Daily",
+      "defaultValue": "None",
       "allowedValues": [
         "Daily",
         "None"
@@ -282,7 +282,6 @@
         "AzureWebJobsStorage__credential": "managedidentity",
         "COST_QUERY_GRANULARITY": "[parameters('defaultGranularity')]",
         "COST_QUERY_TIMEFRAME": "[parameters('defaultTimeframe')]",
-        "COST_SUBSCRIPTION_ID": "[subscription().subscriptionId]",
         "FUNCTIONS_EXTENSION_VERSION": "~4",
         "PYTHON_ENABLE_INIT_INDEXING": "1"
       },

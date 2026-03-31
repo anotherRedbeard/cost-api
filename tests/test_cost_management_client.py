@@ -1,16 +1,27 @@
+import json
 import unittest
+from unittest.mock import Mock, patch
+
+import azure.functions as func
 
 from function_app import (
+    CostManagementApiError,
     CostManagementConfigError,
     _build_query_definition,
+    _clear_cached_cost_queries,
     _normalize_granularity,
     _normalize_query_result,
+    _query_subscription_cost,
     _render_html_report,
     _resolve_time_period,
+    subscription_cost,
 )
 
 
 class FunctionAppHelpersTests(unittest.TestCase):
+    def setUp(self) -> None:
+        _clear_cached_cost_queries()
+
     def test_build_query_definition_uses_usage_and_aggregation(self) -> None:
         body = _build_query_definition(
             timeframe="MonthToDate",
@@ -97,6 +108,124 @@ class FunctionAppHelpersTests(unittest.TestCase):
         self.assertIn("Azure Cost Report", html_report)
         self.assertIn("sub-123", html_report)
         self.assertIn("42.5", html_report)
+
+    def test_subscription_cost_requires_request_subscription_id(self) -> None:
+        request = func.HttpRequest(
+            method="GET",
+            url="http://localhost/api/cost/subscription",
+            params={},
+            body=b"",
+        )
+
+        with patch("function_app._query_subscription_cost") as query_subscription_cost:
+            response = subscription_cost(request)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            json.loads(response.get_body().decode("utf-8")),
+            {
+                "error": (
+                    "A subscription ID is required. Supply subscriptionId in the query "
+                    "string or request body."
+                )
+            },
+        )
+        query_subscription_cost.assert_not_called()
+
+    def test_subscription_cost_html_response_is_inline(self) -> None:
+        request = func.HttpRequest(
+            method="GET",
+            url="http://localhost/api/cost/subscription",
+            params={"subscriptionId": "sub-123", "format": "html"},
+            body=b"",
+        )
+
+        with patch(
+            "function_app._query_subscription_cost",
+            return_value={
+                "subscriptionId": "sub-123",
+                "timeframe": "MonthToDate",
+                "granularity": "None",
+                "currency": "USD",
+                "totalCost": 42.5,
+                "breakdown": [{"totalCost": 42.5, "currency": "USD"}],
+            },
+        ):
+            response = subscription_cost(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.headers.get("Content-Disposition"),
+            'inline; filename="cost-report.html"',
+        )
+        self.assertIn("Azure Cost Report", response.get_body().decode("utf-8"))
+
+    def test_subscription_cost_429_returns_retry_after_header(self) -> None:
+        request = func.HttpRequest(
+            method="GET",
+            url="http://localhost/api/cost/subscription",
+            params={"subscriptionId": "sub-123"},
+            body=b"",
+        )
+
+        with patch(
+            "function_app._query_subscription_cost",
+            side_effect=CostManagementApiError(
+                status_code=429,
+                message="Throttled.",
+                retry_after="15",
+            ),
+        ):
+            response = subscription_cost(request)
+
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.headers.get("Retry-After"), "15")
+        self.assertIsNone(response.headers.get("Content-Disposition"))
+
+    def test_subscription_cost_reuses_cached_result(self) -> None:
+        response = Mock(
+            status_code=200,
+            headers={},
+        )
+        response.json.return_value = {
+            "properties": {
+                "columns": [
+                    {"name": "totalCost", "type": "Number"},
+                    {"name": "Currency", "type": "String"},
+                ],
+                "rows": [
+                    [42.5, "USD"],
+                ],
+            }
+        }
+        session = Mock()
+        session.post.return_value = response
+        session_factory = Mock()
+        session_factory.__enter__ = Mock(return_value=session)
+        session_factory.__exit__ = Mock(return_value=False)
+
+        with patch("function_app._get_access_token", return_value="token"), patch(
+            "function_app.requests.Session",
+            return_value=session_factory,
+        ):
+            first_result = _query_subscription_cost(
+                subscription_id="sub-123",
+                timeframe="MonthToDate",
+                granularity="None",
+                start_date=None,
+                end_date=None,
+            )
+            second_result = _query_subscription_cost(
+                subscription_id="sub-123",
+                timeframe="MonthToDate",
+                granularity="None",
+                start_date=None,
+                end_date=None,
+            )
+
+        self.assertEqual(first_result["totalCost"], 42.5)
+        self.assertEqual(second_result["totalCost"], 42.5)
+        self.assertEqual(session.post.call_count, 1)
 
 
 if __name__ == "__main__":

@@ -14,7 +14,7 @@ param defaultTimeframe string = 'MonthToDate'
   'Daily'
   'None'
 ])
-param defaultGranularity string = 'Daily'
+param defaultGranularity string = 'None'
 @minValue(40)
 @maxValue(1000)
 param maximumInstanceCount int = 100
@@ -211,7 +211,6 @@ resource functionAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     AzureWebJobsStorage__credential: 'managedidentity'
     COST_QUERY_GRANULARITY: defaultGranularity
     COST_QUERY_TIMEFRAME: defaultTimeframe
-    COST_SUBSCRIPTION_ID: subscription().subscriptionId
     FUNCTIONS_EXTENSION_VERSION: '~4'
     PYTHON_ENABLE_INIT_INDEXING: '1'
   }
