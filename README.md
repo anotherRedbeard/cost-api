@@ -262,6 +262,8 @@ export COST_ROLE_SCOPE=/providers/Microsoft.Management/managementGroups/<managem
 ./scripts/smoke-test.sh
 ```
 
+If `AZURE_RESOURCE_GROUP` and `AZURE_FUNCTION_APP_NAME` are already exported, the script uses them directly. Otherwise, it falls back to loading them from the selected `azd` environment.
+
 That script validates:
 
 - `health` returns `200`
@@ -272,6 +274,15 @@ If you also want the smoke test to run a real cost query, set a target just for 
 ```bash
 export SMOKE_TEST_SUBSCRIPTION_ID=<subscription-id>
 ./scripts/smoke-test.sh
+```
+
+Or without `azd`, provide the deployed app details explicitly:
+
+```bash
+export AZURE_RESOURCE_GROUP=<resource-group>
+export AZURE_FUNCTION_APP_NAME=<function-app-name>
+export SMOKE_TEST_SUBSCRIPTION_ID=<subscription-id>
+PYTHON_BIN=python3 ./scripts/smoke-test.sh
 ```
 
 ## GitHub Actions pipeline

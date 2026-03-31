@@ -8,18 +8,28 @@ cd "$repo_root"
 source scripts/common.sh
 
 require_cmd az
-require_cmd azd
 require_cmd curl
-require_cmd python
 
-select_or_create_azd_env "${1:-${AZD_ENV_NAME:-}}"
-load_azd_env
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+  if command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="python"
+  else
+    require_cmd "$PYTHON_BIN"
+  fi
+fi
+
+if [ -z "${AZURE_RESOURCE_GROUP:-}" ] || [ -z "${AZURE_FUNCTION_APP_NAME:-}" ]; then
+  require_cmd azd
+  select_or_create_azd_env "${1:-${AZD_ENV_NAME:-}}"
+  load_azd_env
+fi
 
 require_azd_value AZURE_RESOURCE_GROUP
 require_azd_value AZURE_FUNCTION_APP_NAME
 
 urlencode() {
-  python -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$1"
+  "$PYTHON_BIN" -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$1"
 }
 
 SMOKE_TEST_SUBSCRIPTION_ID="${SMOKE_TEST_SUBSCRIPTION_ID:-${COST_SUBSCRIPTION_ID:-}}"
@@ -45,13 +55,6 @@ health_status="$(curl -sS -o /tmp/cost-api-health.json -w '%{http_code}' "$healt
 if [ "$health_status" != "200" ]; then
   echo "Health check failed with status $health_status" >&2
   cat /tmp/cost-api-health.json >&2
-  exit 1
-fi
-
-cost_status="$(curl -sS -o /tmp/cost-api-cost.json -w '%{http_code}' "$cost_url")"
-if [ "$cost_status" != "200" ]; then
-  echo "Cost query failed with status $cost_status" >&2
-  cat /tmp/cost-api-cost.json >&2
   exit 1
 fi
 
