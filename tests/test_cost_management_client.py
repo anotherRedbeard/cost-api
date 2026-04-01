@@ -23,6 +23,7 @@ from function_app import (
     _run_monthly_report,
     _send_email_attachment,
     _upload_report_to_blob,
+    app,
     monthly_cost_report,
     run_monthly_report,
     subscription_cost,
@@ -32,6 +33,14 @@ from function_app import (
 class FunctionAppHelpersTests(unittest.TestCase):
     def setUp(self) -> None:
         _clear_cached_cost_queries()
+
+    def test_function_app_registers_expected_triggers(self) -> None:
+        function_names = {function.get_function_name() for function in app.get_functions()}
+
+        self.assertIn("monthly_cost_report", function_names)
+        self.assertIn("run_monthly_report", function_names)
+        self.assertIn("subscription_cost", function_names)
+        self.assertNotIn("_run_monthly_report", function_names)
 
     def test_build_query_definition_uses_usage_and_aggregation(self) -> None:
         body = _build_query_definition(

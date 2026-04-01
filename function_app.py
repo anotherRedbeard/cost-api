@@ -643,12 +643,6 @@ def _send_email_attachment(
         smtp_client.send_message(message)
 
 
-@app.timer_trigger(
-    schedule="%MONTHLY_REPORT_SCHEDULE%",
-    arg_name="monthly_timer",
-    run_on_startup=_get_bool_setting("MONTHLY_REPORT_RUN_ON_STARTUP", False),
-    use_monitor=True,
-)
 def _run_monthly_report() -> Dict[str, Any]:
     subscription_id = _first_value(os.getenv("MONTHLY_REPORT_SUBSCRIPTION_ID"))
     if not subscription_id:
@@ -731,7 +725,12 @@ def _run_monthly_report() -> Dict[str, Any]:
         "subscriptionId": subscription_id,
     }
 
-
+@app.timer_trigger(
+    schedule="%MONTHLY_REPORT_SCHEDULE%",
+    arg_name="monthly_timer",
+    run_on_startup=_get_bool_setting("MONTHLY_REPORT_RUN_ON_STARTUP", False),
+    use_monitor=True,
+)
 def monthly_cost_report(monthly_timer: func.TimerRequest) -> None:
     logging.info(
         "monthly_cost_report triggered. past_due=%s delivery=%s",
