@@ -747,7 +747,7 @@ def monthly_cost_report(monthly_timer: func.TimerRequest) -> None:
         raise
 
 
-@app.route(route="reports/monthly/run", methods=["POST"])
+@app.route(route="reports/monthly/run", methods=["GET", "POST"])
 def run_monthly_report(req: func.HttpRequest) -> func.HttpResponse:
     try:
         result = _run_monthly_report()

@@ -288,6 +288,33 @@ class FunctionAppHelpersTests(unittest.TestCase):
             },
         )
 
+    def test_run_monthly_report_accepts_get_requests(self) -> None:
+        request = func.HttpRequest(
+            method="GET",
+            url="http://localhost/api/reports/monthly/run",
+            params={},
+            body=b"",
+        )
+
+        with patch(
+            "function_app._run_monthly_report",
+            return_value={
+                "delivery": "blob",
+                "container": "monthly-cost-reports",
+                "reportFilename": "cost-report-2026-02.html",
+                "startDate": "2026-02-01",
+                "endDate": "2026-02-28",
+                "subscriptionId": "sub-123",
+            },
+        ):
+            response = run_monthly_report(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            json.loads(response.get_body().decode("utf-8"))["status"],
+            "ok",
+        )
+
     def test_run_monthly_report_surfaces_cost_api_errors(self) -> None:
         request = func.HttpRequest(
             method="POST",

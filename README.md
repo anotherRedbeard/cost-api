@@ -309,10 +309,17 @@ To test without email, leave `MONTHLY_REPORT_DELIVERY=blob` and inspect the
 `monthly-cost-reports` container in the Function App storage account.
 
 For a reliable on-demand test, call the manual trigger endpoint, which uses the
-same monthly report code path as the timer:
+same monthly report code path as the timer. It now accepts either a browser
+`GET` or an API `POST`:
 
 ```bash
 curl -X POST "${BASE_URL}/reports/monthly/run?code=${COST_KEY}"
+```
+
+Or just open:
+
+```text
+${BASE_URL}/reports/monthly/run?code=${COST_KEY}
 ```
 
 If you want to force one immediate execution after deployment, temporarily set
