@@ -20,14 +20,6 @@ azd env set AZURE_SUBSCRIPTION_ID "$AZURE_SUBSCRIPTION_ID" >/dev/null
 azd env set AZURE_RESOURCE_GROUP "$AZURE_RESOURCE_GROUP" >/dev/null
 azd env set AZURE_LOCATION "$AZURE_LOCATION" >/dev/null
 
-if [ -n "${COST_QUERY_TIMEFRAME:-}" ]; then
-  azd env set COST_QUERY_TIMEFRAME "$COST_QUERY_TIMEFRAME" >/dev/null
-fi
-
-if [ -n "${COST_QUERY_GRANULARITY:-}" ]; then
-  azd env set COST_QUERY_GRANULARITY "$COST_QUERY_GRANULARITY" >/dev/null
-fi
-
 echo "Provisioning infrastructure with azd for environment: $AZD_ENV_NAME"
 azd provision --no-prompt
 

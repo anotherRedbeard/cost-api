@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "17569229708166880251"
+      "templateHash": "9031510432361537362"
     }
   },
   "parameters": {
@@ -16,20 +16,7 @@
       "type": "string",
       "defaultValue": "[resourceGroup().location]"
     },
-    "defaultTimeframe": {
-      "type": "string",
-      "defaultValue": "MonthToDate",
-      "allowedValues": [
-        "MonthToDate",
-        "TheLastMonth",
-        "TheLastWeek",
-        "TheLastYear",
-        "WeekToDate",
-        "BillingMonthToDate",
-        "TheLastBillingMonth"
-      ]
-    },
-    "defaultGranularity": {
+    "monthlyReportGranularity": {
       "type": "string",
       "defaultValue": "None",
       "allowedValues": [
@@ -280,12 +267,10 @@
         "AzureWebJobsStorage__accountName": "[variables('storageAccountName')]",
         "AzureWebJobsStorage__clientId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('deploymentIdentityName')), '2023-01-31').clientId]",
         "AzureWebJobsStorage__credential": "managedidentity",
-        "COST_QUERY_GRANULARITY": "[parameters('defaultGranularity')]",
-        "COST_QUERY_TIMEFRAME": "[parameters('defaultTimeframe')]",
         "FUNCTIONS_EXTENSION_VERSION": "~4",
         "MONTHLY_REPORT_BLOB_CONTAINER": "monthly-cost-reports",
         "MONTHLY_REPORT_DELIVERY": "blob",
-        "MONTHLY_REPORT_GRANULARITY": "[parameters('defaultGranularity')]",
+        "MONTHLY_REPORT_GRANULARITY": "[parameters('monthlyReportGranularity')]",
         "MONTHLY_REPORT_RECIPIENT": "andrew.redman@microsoft.com",
         "MONTHLY_REPORT_RUN_ON_STARTUP": "false",
         "MONTHLY_REPORT_SCHEDULE": "0 0 9 1 * *",

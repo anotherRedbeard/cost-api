@@ -5,10 +5,10 @@ import os
 import smtplib
 import ssl
 import time
-from email.message import EmailMessage
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from email.message import EmailMessage
 from typing import Any, Dict, List, Optional, Tuple
 
 import azure.functions as func
@@ -23,20 +23,11 @@ MANAGEMENT_SCOPE = "https://management.azure.com/.default"
 COST_QUERY_API_VERSION = "2025-03-01"
 COST_QUERY_CACHE_TTL_SECONDS = 300
 DEFAULT_MONTHLY_REPORT_RECIPIENT = "andrew.redman@microsoft.com"
-ALLOWED_TIMEFRAMES = {
-    "BillingMonthToDate": "BillingMonthToDate",
-    "Custom": "Custom",
-    "MonthToDate": "MonthToDate",
-    "TheLastBillingMonth": "TheLastBillingMonth",
-    "TheLastMonth": "TheLastMonth",
-    "TheLastWeek": "TheLastWeek",
-    "TheLastYear": "TheLastYear",
-    "WeekToDate": "WeekToDate",
-}
+DEFAULT_MONTHLY_REPORT_GRANULARITY = "None"
 
 
 class CostManagementConfigError(ValueError):
-    """Raised when the request or environment is misconfigured."""
+    """Raised when the environment is misconfigured."""
 
 
 @dataclass
@@ -51,23 +42,6 @@ class CostManagementApiError(Exception):
 
 
 _COST_QUERY_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
-
-
-def _load_request_payload(req: func.HttpRequest) -> Dict[str, Any]:
-    if not req.get_body():
-        return {}
-
-    try:
-        payload = req.get_json()
-    except ValueError as exc:
-        raise CostManagementConfigError(
-            "Request body must be valid JSON when a body is supplied."
-        ) from exc
-
-    if not isinstance(payload, dict):
-        raise CostManagementConfigError("Request body must be a JSON object.")
-
-    return payload
 
 
 def _first_value(*values: Optional[str]) -> Optional[str]:
@@ -111,18 +85,16 @@ def _get_bool_setting(name: str, default: bool) -> bool:
 
 def _build_cache_key(
     subscription_id: str,
-    timeframe: str,
+    start_date: str,
+    end_date: str,
     granularity: str,
-    start_date: Optional[str],
-    end_date: Optional[str],
 ) -> str:
     return json.dumps(
         {
             "subscriptionId": subscription_id,
-            "timeframe": timeframe,
-            "granularity": granularity,
             "startDate": start_date,
             "endDate": end_date,
+            "granularity": granularity,
         },
         sort_keys=True,
     )
@@ -168,23 +140,8 @@ def _json_response(
     )
 
 
-def _file_response(
-    body: str,
-    mimetype: str,
-    filename: str,
-    status_code: int = 200,
-    disposition: str = "attachment",
-) -> func.HttpResponse:
-    return func.HttpResponse(
-        body=body,
-        status_code=status_code,
-        mimetype=mimetype,
-        headers={"Content-Disposition": f'{disposition}; filename="{filename}"'},
-    )
-
-
-def _normalize_granularity(granularity: str) -> str:
-    normalized = (granularity or "Daily").strip()
+def _normalize_granularity(granularity: Optional[str]) -> str:
+    normalized = (granularity or DEFAULT_MONTHLY_REPORT_GRANULARITY).strip()
     if normalized.lower() == "daily":
         return "Daily"
     if normalized.lower() == "none":
@@ -195,55 +152,18 @@ def _normalize_granularity(granularity: str) -> str:
     )
 
 
-def _parse_iso_date(value: str, field_name: str) -> date:
-    try:
-        return date.fromisoformat(value)
-    except ValueError as exc:
-        raise CostManagementConfigError(
-            f"{field_name} must use ISO format YYYY-MM-DD."
-        ) from exc
-
-
-def _resolve_time_period(
-    timeframe: str,
-    start_date: Optional[str],
-    end_date: Optional[str],
-) -> Tuple[str, Optional[Dict[str, str]]]:
-    normalized_timeframe = (timeframe or "MonthToDate").strip()
-
-    if start_date or end_date:
-        if not start_date or not end_date:
-            raise CostManagementConfigError(
-                "Both startDate and endDate are required when querying a custom range."
-            )
-
-        start = _parse_iso_date(start_date, "startDate")
-        end = _parse_iso_date(end_date, "endDate")
-        if start > end:
-            raise CostManagementConfigError("startDate cannot be after endDate.")
-
-        return "Custom", {
-            "from": f"{start.isoformat()}T00:00:00Z",
-            "to": f"{end.isoformat()}T23:59:59Z",
-        }
-
-    if normalized_timeframe not in ALLOWED_TIMEFRAMES:
-        raise CostManagementConfigError(
-            "Unsupported timeframe. Supported values are: "
-            + ", ".join(sorted(ALLOWED_TIMEFRAMES))
-        )
-
-    return ALLOWED_TIMEFRAMES[normalized_timeframe], None
-
-
 def _build_query_definition(
-    timeframe: str,
+    start_date: str,
+    end_date: str,
     granularity: str,
-    time_period: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
-    body: Dict[str, Any] = {
+    return {
         "type": "Usage",
-        "timeframe": timeframe,
+        "timeframe": "Custom",
+        "timePeriod": {
+            "from": f"{start_date}T00:00:00Z",
+            "to": f"{end_date}T23:59:59Z",
+        },
         "dataset": {
             "aggregation": {
                 "totalCost": {
@@ -255,13 +175,10 @@ def _build_query_definition(
         },
     }
 
-    if time_period:
-        body["timePeriod"] = time_period
 
-    return body
-
-
-def _find_column_index(column_names: List[Optional[str]], *candidates: str) -> Optional[int]:
+def _find_column_index(
+    column_names: List[Optional[str]], *candidates: str
+) -> Optional[int]:
     lowered = [name.lower() if name else None for name in column_names]
     for candidate in candidates:
         if candidate.lower() in lowered:
@@ -280,9 +197,9 @@ def _format_usage_date(raw_value: Any) -> str:
 
 def _normalize_query_result(
     subscription_id: str,
-    timeframe: str,
+    start_date: str,
+    end_date: str,
     granularity: str,
-    time_period: Optional[Dict[str, str]],
     response_properties: Dict[str, Any],
 ) -> Dict[str, Any]:
     columns = response_properties.get("columns", [])
@@ -318,9 +235,9 @@ def _normalize_query_result(
     return {
         "subscriptionId": subscription_id,
         "scope": f"/subscriptions/{subscription_id}",
-        "timeframe": timeframe,
+        "periodStart": start_date,
+        "periodEnd": end_date,
         "granularity": granularity,
-        "timePeriod": time_period,
         "currency": currency,
         "totalCost": float(total_cost),
         "rowCount": len(breakdown),
@@ -338,8 +255,6 @@ def _build_query_url(subscription_id: str) -> str:
 
 
 def _get_access_token() -> str:
-    from azure.identity import DefaultAzureCredential
-
     credential = DefaultAzureCredential(exclude_interactive_browser_credential=True)
     return credential.get_token(MANAGEMENT_SCOPE).token
 
@@ -377,30 +292,23 @@ def _build_api_error(response: requests.Response) -> CostManagementApiError:
     )
 
 
-def _query_subscription_cost(
+def _query_cost_for_period(
     subscription_id: str,
-    timeframe: str,
+    start_date: str,
+    end_date: str,
     granularity: str,
-    start_date: Optional[str],
-    end_date: Optional[str],
 ) -> Dict[str, Any]:
-    query_timeframe, time_period = _resolve_time_period(
-        timeframe=timeframe,
-        start_date=start_date,
-        end_date=end_date,
-    )
     normalized_granularity = _normalize_granularity(granularity)
     request_body = _build_query_definition(
-        timeframe=query_timeframe,
+        start_date=start_date,
+        end_date=end_date,
         granularity=normalized_granularity,
-        time_period=time_period,
     )
     cache_key = _build_cache_key(
         subscription_id=subscription_id,
-        timeframe=query_timeframe,
-        granularity=normalized_granularity,
         start_date=start_date,
         end_date=end_date,
+        granularity=normalized_granularity,
     )
     cached_result = _get_cached_cost_query(cache_key)
     if cached_result is not None:
@@ -422,9 +330,9 @@ def _query_subscription_cost(
             if response.status_code == 204:
                 result = _normalize_query_result(
                     subscription_id=subscription_id,
-                    timeframe=query_timeframe,
+                    start_date=start_date,
+                    end_date=end_date,
                     granularity=normalized_granularity,
-                    time_period=time_period,
                     response_properties={"columns": [], "rows": []},
                 )
                 _store_cached_cost_query(cache_key, result)
@@ -444,9 +352,9 @@ def _query_subscription_cost(
 
     result = _normalize_query_result(
         subscription_id=subscription_id,
-        timeframe=query_timeframe,
+        start_date=start_date,
+        end_date=end_date,
         granularity=normalized_granularity,
-        time_period=time_period,
         response_properties={"columns": combined_columns, "rows": combined_rows},
     )
     _store_cached_cost_query(cache_key, result)
@@ -468,13 +376,13 @@ def _render_html_report(result: Dict[str, Any]) -> str:
 
     if not table_rows:
         table_rows = (
-            "<tr><td colspan=\"3\">No rows returned for the selected scope and time window.</td></tr>"
+            '<tr><td colspan="3">No rows returned for the selected billing period.</td></tr>'
         )
 
     return f"""<!DOCTYPE html>
-<html lang="en">
+<html lang=\"en\">
 <head>
-  <meta charset="utf-8">
+  <meta charset=\"utf-8\">
   <title>Azure Cost Report</title>
   <style>
     body {{ font-family: Arial, sans-serif; margin: 24px; color: #1f2937; }}
@@ -488,11 +396,11 @@ def _render_html_report(result: Dict[str, Any]) -> str:
 </head>
 <body>
   <h1>Azure Cost Report</h1>
-  <div class="summary">
-    <p><strong>Subscription:</strong> <code>{html.escape(result["subscriptionId"])}</code></p>
-    <p><strong>Timeframe:</strong> {html.escape(result["timeframe"])}</p>
-    <p><strong>Granularity:</strong> {html.escape(result["granularity"])}</p>
-    <p><strong>Total Cost:</strong> {html.escape(str(result["totalCost"]))} {html.escape(str(result.get("currency") or ""))}</p>
+  <div class=\"summary\">
+    <p><strong>Subscription:</strong> <code>{html.escape(result['subscriptionId'])}</code></p>
+    <p><strong>Period:</strong> {html.escape(result['periodStart'])} to {html.escape(result['periodEnd'])}</p>
+    <p><strong>Granularity:</strong> {html.escape(result['granularity'])}</p>
+    <p><strong>Total Cost:</strong> {html.escape(str(result['totalCost']))} {html.escape(str(result.get('currency') or ''))}</p>
   </div>
   <table>
     <thead>
@@ -611,9 +519,7 @@ def _send_email_attachment(
     message["Subject"] = subject
     message["From"] = smtp_from
     message["To"] = recipient
-    message.set_content(
-        "Attached is your monthly Azure Cost Management report."
-    )
+    message.set_content("Attached is your monthly Azure Cost Management report.")
     message.add_attachment(
         attachment_body.encode("utf-8"),
         maintype="text",
@@ -647,17 +553,18 @@ def _run_monthly_report() -> Dict[str, Any]:
     subscription_id = _first_value(os.getenv("MONTHLY_REPORT_SUBSCRIPTION_ID"))
     if not subscription_id:
         raise CostManagementConfigError(
-            "MONTHLY_REPORT_SUBSCRIPTION_ID must be configured for the monthly timer."
+            "MONTHLY_REPORT_SUBSCRIPTION_ID must be configured for the monthly report."
         )
 
     recipient = _first_value(
         os.getenv("MONTHLY_REPORT_RECIPIENT"),
         DEFAULT_MONTHLY_REPORT_RECIPIENT,
     )
-    granularity = _first_value(
-        os.getenv("MONTHLY_REPORT_GRANULARITY"),
-        os.getenv("COST_QUERY_GRANULARITY"),
-        "None",
+    granularity = _normalize_granularity(
+        _first_value(
+            os.getenv("MONTHLY_REPORT_GRANULARITY"),
+            DEFAULT_MONTHLY_REPORT_GRANULARITY,
+        )
     )
     start_date, end_date = _resolve_previous_month_range()
     delivery = _first_value(os.getenv("MONTHLY_REPORT_DELIVERY"), "blob")
@@ -669,12 +576,11 @@ def _run_monthly_report() -> Dict[str, Any]:
         granularity,
         delivery,
     )
-    result = _query_subscription_cost(
+    result = _query_cost_for_period(
         subscription_id=subscription_id,
-        timeframe="MonthToDate",
-        granularity=granularity,
         start_date=start_date,
         end_date=end_date,
+        granularity=granularity,
     )
     report_html = _render_html_report(result)
     report_filename = _build_monthly_report_filename(start_date)
@@ -696,6 +602,7 @@ def _run_monthly_report() -> Dict[str, Any]:
             container_name,
         )
         return {
+            "status": "ok",
             "delivery": "blob",
             "container": container_name,
             "reportFilename": report_filename,
@@ -717,6 +624,7 @@ def _run_monthly_report() -> Dict[str, Any]:
     )
     logging.info("Sent monthly cost report to %s for %s.", recipient, start_date[:7])
     return {
+        "status": "ok",
         "delivery": "email",
         "recipient": recipient,
         "reportFilename": report_filename,
@@ -724,6 +632,7 @@ def _run_monthly_report() -> Dict[str, Any]:
         "endDate": end_date,
         "subscriptionId": subscription_id,
     }
+
 
 @app.timer_trigger(
     schedule="%MONTHLY_REPORT_SCHEDULE%",
@@ -750,13 +659,7 @@ def monthly_cost_report(monthly_timer: func.TimerRequest) -> None:
 @app.route(route="reports/monthly/run", methods=["GET", "POST"])
 def run_monthly_report(req: func.HttpRequest) -> func.HttpResponse:
     try:
-        result = _run_monthly_report()
-        return _json_response(
-            {
-                "status": "ok",
-                **result,
-            }
-        )
+        return _json_response(_run_monthly_report())
     except CostManagementConfigError as exc:
         return _json_response({"error": str(exc)}, status_code=400)
     except CostManagementApiError as exc:
@@ -768,6 +671,7 @@ def run_monthly_report(req: func.HttpRequest) -> func.HttpResponse:
             response_payload["retryAfter"] = exc.retry_after
         if exc.details:
             response_payload["details"] = exc.details
+
         response_headers: Optional[Dict[str, str]] = None
         if exc.retry_after:
             response_headers = {"Retry-After": exc.retry_after}
@@ -792,109 +696,3 @@ def run_monthly_report(req: func.HttpRequest) -> func.HttpResponse:
 @app.route(route="health", methods=["GET"])
 def health(req: func.HttpRequest) -> func.HttpResponse:
     return _json_response({"status": "ok"})
-
-
-@app.route(route="cost/subscription", methods=["GET", "POST"])
-def subscription_cost(req: func.HttpRequest) -> func.HttpResponse:
-    try:
-        payload = _load_request_payload(req)
-        subscription_id = _first_value(
-            req.params.get("subscriptionId"),
-            payload.get("subscriptionId"),
-        )
-        timeframe = _first_value(
-            req.params.get("timeframe"),
-            payload.get("timeframe"),
-            os.getenv("COST_QUERY_TIMEFRAME"),
-            "MonthToDate",
-        )
-        granularity = _first_value(
-            req.params.get("granularity"),
-            payload.get("granularity"),
-            os.getenv("COST_QUERY_GRANULARITY"),
-            "Daily",
-        )
-        start_date = _first_value(
-            req.params.get("from"),
-            req.params.get("startDate"),
-            payload.get("from"),
-            payload.get("startDate"),
-        )
-        end_date = _first_value(
-            req.params.get("to"),
-            req.params.get("endDate"),
-            payload.get("to"),
-            payload.get("endDate"),
-        )
-        output_format = _first_value(
-            req.params.get("format"),
-            payload.get("format"),
-            "json",
-        )
-
-        if not subscription_id:
-            raise CostManagementConfigError(
-                "A subscription ID is required. Supply subscriptionId in the query string "
-                "or request body."
-            )
-
-        result = _query_subscription_cost(
-            subscription_id=subscription_id,
-            timeframe=timeframe,
-            granularity=granularity,
-            start_date=start_date,
-            end_date=end_date,
-        )
-
-        if output_format.lower() == "html":
-            return _file_response(
-                body=_render_html_report(result),
-                mimetype="text/html",
-                filename="cost-report.html",
-                disposition="inline",
-            )
-
-        if output_format.lower() != "json":
-            raise CostManagementConfigError(
-                "Unsupported format. Supported values are: json, html."
-            )
-
-        return _file_response(
-            body=json.dumps(result, indent=2),
-            mimetype="application/json",
-            filename="cost-report.json",
-        )
-    except CostManagementConfigError as exc:
-        return _json_response({"error": str(exc)}, status_code=400)
-    except CostManagementApiError as exc:
-        response_payload: Dict[str, Any] = {
-            "error": str(exc),
-            "statusCode": exc.status_code,
-        }
-
-        if exc.retry_after:
-            response_payload["retryAfter"] = exc.retry_after
-
-        if exc.details:
-            response_payload["details"] = exc.details
-
-        response_headers: Optional[Dict[str, str]] = None
-        if exc.retry_after:
-            response_headers = {"Retry-After": exc.retry_after}
-
-        return _json_response(
-            response_payload,
-            status_code=exc.status_code,
-            headers=response_headers,
-        )
-    except Exception:
-        logging.exception("Unexpected failure while querying Azure Cost Management.")
-        return _json_response(
-            {
-                "error": (
-                    "Unexpected error while querying Azure Cost Management. "
-                    "Check Function logs for details."
-                )
-            },
-            status_code=500,
-        )

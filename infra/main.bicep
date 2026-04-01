@@ -1,20 +1,10 @@
 param environmentName string
 param location string = resourceGroup().location
 @allowed([
-  'MonthToDate'
-  'TheLastMonth'
-  'TheLastWeek'
-  'TheLastYear'
-  'WeekToDate'
-  'BillingMonthToDate'
-  'TheLastBillingMonth'
-])
-param defaultTimeframe string = 'MonthToDate'
-@allowed([
   'Daily'
   'None'
 ])
-param defaultGranularity string = 'None'
+param monthlyReportGranularity string = 'None'
 @minValue(40)
 @maxValue(1000)
 param maximumInstanceCount int = 100
@@ -209,12 +199,10 @@ resource functionAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     AzureWebJobsStorage__accountName: storageAccount.name
     AzureWebJobsStorage__clientId: deploymentIdentity.properties.clientId
     AzureWebJobsStorage__credential: 'managedidentity'
-    COST_QUERY_GRANULARITY: defaultGranularity
-    COST_QUERY_TIMEFRAME: defaultTimeframe
     FUNCTIONS_EXTENSION_VERSION: '~4'
     MONTHLY_REPORT_BLOB_CONTAINER: 'monthly-cost-reports'
     MONTHLY_REPORT_DELIVERY: 'blob'
-    MONTHLY_REPORT_GRANULARITY: defaultGranularity
+    MONTHLY_REPORT_GRANULARITY: monthlyReportGranularity
     MONTHLY_REPORT_RECIPIENT: 'andrew.redman@microsoft.com'
     MONTHLY_REPORT_RUN_ON_STARTUP: 'false'
     MONTHLY_REPORT_SCHEDULE: '0 0 9 1 * *'

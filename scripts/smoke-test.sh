@@ -32,8 +32,6 @@ urlencode() {
   "$PYTHON_BIN" -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$1"
 }
 
-SMOKE_TEST_SUBSCRIPTION_ID="${SMOKE_TEST_SUBSCRIPTION_ID:-${COST_SUBSCRIPTION_ID:-}}"
-
 health_key="$(az functionapp function keys list \
   --resource-group "$AZURE_RESOURCE_GROUP" \
   --name "$AZURE_FUNCTION_APP_NAME" \
@@ -41,15 +39,16 @@ health_key="$(az functionapp function keys list \
   --query default \
   -o tsv)"
 
-cost_key="$(az functionapp function keys list \
+report_key="$(az functionapp function keys list \
   --resource-group "$AZURE_RESOURCE_GROUP" \
   --name "$AZURE_FUNCTION_APP_NAME" \
-  --function-name subscription_cost \
+  --function-name run_monthly_report \
   --query default \
   -o tsv)"
 
 base_url="https://${AZURE_FUNCTION_APP_NAME}.azurewebsites.net/api"
 health_url="${base_url}/health?code=$(urlencode "$health_key")"
+report_url="${base_url}/reports/monthly/run?code=$(urlencode "$report_key")"
 
 health_status="$(curl -sS -o /tmp/cost-api-health.json -w '%{http_code}' "$health_url")"
 if [ "$health_status" != "200" ]; then
@@ -62,40 +61,26 @@ echo "Health response:"
 cat /tmp/cost-api-health.json
 echo
 
-if [ -n "$SMOKE_TEST_SUBSCRIPTION_ID" ]; then
-  cost_url="${base_url}/cost/subscription?subscriptionId=${SMOKE_TEST_SUBSCRIPTION_ID}&format=json&code=$(urlencode "$cost_key")"
-  cost_status="$(curl -sS -o /tmp/cost-api-cost.json -w '%{http_code}' "$cost_url")"
-  if [ "$cost_status" != "200" ]; then
-    echo "Cost query failed with status $cost_status" >&2
-    cat /tmp/cost-api-cost.json >&2
-    exit 1
-  fi
+report_status="$(curl -sS -o /tmp/cost-api-report.json -w '%{http_code}' "$report_url")"
+if [ "$report_status" != "200" ]; then
+  echo "Monthly report run failed with status $report_status" >&2
+  cat /tmp/cost-api-report.json >&2
+  exit 1
+fi
 
-  echo "Cost response preview:"
-  python - <<'PY'
+echo "Monthly report response preview:"
+python - <<'PY'
 import json
 from pathlib import Path
 
-payload = json.loads(Path("/tmp/cost-api-cost.json").read_text())
+payload = json.loads(Path('/tmp/cost-api-report.json').read_text())
 preview = {
-    "subscriptionId": payload.get("subscriptionId"),
-    "timeframe": payload.get("timeframe"),
-    "currency": payload.get("currency"),
-    "totalCost": payload.get("totalCost"),
-    "rowCount": payload.get("rowCount"),
+    'status': payload.get('status'),
+    'delivery': payload.get('delivery'),
+    'container': payload.get('container'),
+    'reportFilename': payload.get('reportFilename'),
+    'startDate': payload.get('startDate'),
+    'endDate': payload.get('endDate'),
 }
 print(json.dumps(preview, indent=2))
 PY
-else
-  validation_url="${base_url}/cost/subscription?code=$(urlencode "$cost_key")"
-  validation_status="$(curl -sS -o /tmp/cost-api-validation.json -w '%{http_code}' "$validation_url")"
-  if [ "$validation_status" != "400" ]; then
-    echo "Expected a validation error without subscriptionId, got $validation_status" >&2
-    cat /tmp/cost-api-validation.json >&2
-    exit 1
-  fi
-
-  echo "Validation response preview:"
-  cat /tmp/cost-api-validation.json
-  echo
-fi

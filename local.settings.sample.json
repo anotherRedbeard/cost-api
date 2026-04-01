@@ -4,8 +4,6 @@
     "FUNCTIONS_WORKER_RUNTIME": "python",
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "AzureWebJobsFeatureFlags": "EnableWorkerIndexing",
-    "COST_QUERY_TIMEFRAME": "MonthToDate",
-    "COST_QUERY_GRANULARITY": "None",
     "MONTHLY_REPORT_SCHEDULE": "0 0 9 1 * *",
     "MONTHLY_REPORT_RUN_ON_STARTUP": "false",
     "MONTHLY_REPORT_DELIVERY": "blob",
