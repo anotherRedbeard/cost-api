@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import azure.functions as func
 import requests
+from azure.core.exceptions import ResourceExistsError
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient
 
@@ -529,6 +530,7 @@ def _build_monthly_report_filename(start_date: str) -> str:
 def _get_blob_service_client() -> BlobServiceClient:
     storage_connection_string = os.getenv("AzureWebJobsStorage")
     if storage_connection_string:
+        logging.info("Using AzureWebJobsStorage connection string for blob delivery.")
         return BlobServiceClient.from_connection_string(storage_connection_string)
 
     storage_account_name = _first_value(os.getenv("AzureWebJobsStorage__accountName"))
@@ -539,6 +541,11 @@ def _get_blob_service_client() -> BlobServiceClient:
         )
 
     managed_identity_client_id = _first_value(os.getenv("AzureWebJobsStorage__clientId"))
+    logging.info(
+        "Using managed identity blob delivery for storage account %s with client id %s.",
+        storage_account_name,
+        managed_identity_client_id or "<default>",
+    )
     credential = DefaultAzureCredential(
         exclude_interactive_browser_credential=True,
         managed_identity_client_id=managed_identity_client_id,
@@ -554,12 +561,18 @@ def _upload_report_to_blob(
     blob_name: str,
     report_html: str,
 ) -> None:
+    logging.info(
+        "Uploading monthly report blob %s to container %s.",
+        blob_name,
+        container_name,
+    )
     blob_service_client = _get_blob_service_client()
     container_client = blob_service_client.get_container_client(container_name)
     try:
         container_client.create_container()
-    except Exception:
-        pass
+        logging.info("Created blob container %s for monthly reports.", container_name)
+    except ResourceExistsError:
+        logging.info("Blob container %s already exists.", container_name)
 
     container_client.upload_blob(
         name=blob_name,
@@ -567,6 +580,7 @@ def _upload_report_to_blob(
         overwrite=True,
         content_type="text/html; charset=utf-8",
     )
+    logging.info("Uploaded monthly report blob %s successfully.", blob_name)
 
 
 def _send_email_attachment(
@@ -632,70 +646,87 @@ def _send_email_attachment(
 @app.timer_trigger(
     schedule="%MONTHLY_REPORT_SCHEDULE%",
     arg_name="monthly_timer",
-    run_on_startup=_get_bool_setting("MONTHLY_REPORT_RUN_ON_STARTUP", True),
+    run_on_startup=_get_bool_setting("MONTHLY_REPORT_RUN_ON_STARTUP", False),
     use_monitor=True,
 )
 def monthly_cost_report(monthly_timer: func.TimerRequest) -> None:
+    logging.info(
+        "monthly_cost_report triggered. past_due=%s delivery=%s",
+        monthly_timer.past_due,
+        _first_value(os.getenv("MONTHLY_REPORT_DELIVERY"), "blob"),
+    )
     if monthly_timer.past_due:
         logging.warning("The monthly cost report timer trigger is running late.")
 
-    subscription_id = _first_value(os.getenv("MONTHLY_REPORT_SUBSCRIPTION_ID"))
-    if not subscription_id:
-        raise CostManagementConfigError(
-            "MONTHLY_REPORT_SUBSCRIPTION_ID must be configured for the monthly timer."
-        )
+    try:
+        subscription_id = _first_value(os.getenv("MONTHLY_REPORT_SUBSCRIPTION_ID"))
+        if not subscription_id:
+            raise CostManagementConfigError(
+                "MONTHLY_REPORT_SUBSCRIPTION_ID must be configured for the monthly timer."
+            )
 
-    recipient = _first_value(
-        os.getenv("MONTHLY_REPORT_RECIPIENT"),
-        DEFAULT_MONTHLY_REPORT_RECIPIENT,
-    )
-    granularity = _first_value(
-        os.getenv("MONTHLY_REPORT_GRANULARITY"),
-        os.getenv("COST_QUERY_GRANULARITY"),
-        "None",
-    )
-    start_date, end_date = _resolve_previous_month_range()
-    result = _query_subscription_cost(
-        subscription_id=subscription_id,
-        timeframe="MonthToDate",
-        granularity=granularity,
-        start_date=start_date,
-        end_date=end_date,
-    )
-    report_html = _render_html_report(result)
-    report_filename = _build_monthly_report_filename(start_date)
-    report_subject = f"Azure Cost Report - {start_date[:7]}"
-    delivery = _first_value(os.getenv("MONTHLY_REPORT_DELIVERY"), "blob")
-
-    if delivery == "blob":
-        container_name = _first_value(
-            os.getenv("MONTHLY_REPORT_BLOB_CONTAINER"),
-            "monthly-cost-reports",
+        recipient = _first_value(
+            os.getenv("MONTHLY_REPORT_RECIPIENT"),
+            DEFAULT_MONTHLY_REPORT_RECIPIENT,
         )
-        _upload_report_to_blob(
-            container_name=container_name,
-            blob_name=report_filename,
-            report_html=report_html,
+        granularity = _first_value(
+            os.getenv("MONTHLY_REPORT_GRANULARITY"),
+            os.getenv("COST_QUERY_GRANULARITY"),
+            "None",
         )
+        start_date, end_date = _resolve_previous_month_range()
+        delivery = _first_value(os.getenv("MONTHLY_REPORT_DELIVERY"), "blob")
         logging.info(
-            "Uploaded monthly cost report %s to blob container %s.",
-            report_filename,
-            container_name,
+            "Preparing monthly report for subscription %s covering %s to %s with granularity %s via %s.",
+            subscription_id,
+            start_date,
+            end_date,
+            granularity,
+            delivery,
         )
-        return
-
-    if delivery != "email":
-        raise CostManagementConfigError(
-            "MONTHLY_REPORT_DELIVERY must be either 'blob' or 'email'."
+        result = _query_subscription_cost(
+            subscription_id=subscription_id,
+            timeframe="MonthToDate",
+            granularity=granularity,
+            start_date=start_date,
+            end_date=end_date,
         )
+        report_html = _render_html_report(result)
+        report_filename = _build_monthly_report_filename(start_date)
+        report_subject = f"Azure Cost Report - {start_date[:7]}"
 
-    _send_email_attachment(
-        recipient=recipient,
-        subject=report_subject,
-        attachment_name=report_filename,
-        attachment_body=report_html,
-    )
-    logging.info("Sent monthly cost report to %s for %s.", recipient, start_date[:7])
+        if delivery == "blob":
+            container_name = _first_value(
+                os.getenv("MONTHLY_REPORT_BLOB_CONTAINER"),
+                "monthly-cost-reports",
+            )
+            _upload_report_to_blob(
+                container_name=container_name,
+                blob_name=report_filename,
+                report_html=report_html,
+            )
+            logging.info(
+                "Uploaded monthly cost report %s to blob container %s.",
+                report_filename,
+                container_name,
+            )
+            return
+
+        if delivery != "email":
+            raise CostManagementConfigError(
+                "MONTHLY_REPORT_DELIVERY must be either 'blob' or 'email'."
+            )
+
+        _send_email_attachment(
+            recipient=recipient,
+            subject=report_subject,
+            attachment_name=report_filename,
+            attachment_body=report_html,
+        )
+        logging.info("Sent monthly cost report to %s for %s.", recipient, start_date[:7])
+    except Exception:
+        logging.exception("monthly_cost_report failed.")
+        raise
 
 
 @app.route(route="health", methods=["GET"])
