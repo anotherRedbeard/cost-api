@@ -632,7 +632,7 @@ def _send_email_attachment(
 @app.timer_trigger(
     schedule="%MONTHLY_REPORT_SCHEDULE%",
     arg_name="monthly_timer",
-    run_on_startup=_get_bool_setting("MONTHLY_REPORT_RUN_ON_STARTUP", False),
+    run_on_startup=_get_bool_setting("MONTHLY_REPORT_RUN_ON_STARTUP", True),
     use_monitor=True,
 )
 def monthly_cost_report(monthly_timer: func.TimerRequest) -> None:
