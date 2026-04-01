@@ -20,9 +20,11 @@ from function_app import (
     _render_html_report,
     _resolve_previous_month_range,
     _resolve_time_period,
+    _run_monthly_report,
     _send_email_attachment,
     _upload_report_to_blob,
     monthly_cost_report,
+    run_monthly_report,
     subscription_cost,
 )
 
@@ -241,6 +243,62 @@ class FunctionAppHelpersTests(unittest.TestCase):
             blob_name="cost-report-2026-02.html",
             report_html=unittest.mock.ANY,
         )
+
+    def test_run_monthly_report_returns_delivery_details(self) -> None:
+        request = func.HttpRequest(
+            method="POST",
+            url="http://localhost/api/reports/monthly/run",
+            params={},
+            body=b"",
+        )
+
+        with patch(
+            "function_app._run_monthly_report",
+            return_value={
+                "delivery": "blob",
+                "container": "monthly-cost-reports",
+                "reportFilename": "cost-report-2026-02.html",
+                "startDate": "2026-02-01",
+                "endDate": "2026-02-28",
+                "subscriptionId": "sub-123",
+            },
+        ):
+            response = run_monthly_report(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            json.loads(response.get_body().decode("utf-8")),
+            {
+                "status": "ok",
+                "delivery": "blob",
+                "container": "monthly-cost-reports",
+                "reportFilename": "cost-report-2026-02.html",
+                "startDate": "2026-02-01",
+                "endDate": "2026-02-28",
+                "subscriptionId": "sub-123",
+            },
+        )
+
+    def test_run_monthly_report_surfaces_cost_api_errors(self) -> None:
+        request = func.HttpRequest(
+            method="POST",
+            url="http://localhost/api/reports/monthly/run",
+            params={},
+            body=b"",
+        )
+
+        with patch(
+            "function_app._run_monthly_report",
+            side_effect=CostManagementApiError(
+                status_code=429,
+                message="Throttled.",
+                retry_after="15",
+            ),
+        ):
+            response = run_monthly_report(request)
+
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.headers.get("Retry-After"), "15")
 
     def test_subscription_cost_requires_request_subscription_id(self) -> None:
         request = func.HttpRequest(

@@ -308,6 +308,13 @@ Infrastructure now sets these non-secret app settings automatically:
 To test without email, leave `MONTHLY_REPORT_DELIVERY=blob` and inspect the
 `monthly-cost-reports` container in the Function App storage account.
 
+For a reliable on-demand test, call the manual trigger endpoint, which uses the
+same monthly report code path as the timer:
+
+```bash
+curl -X POST "${BASE_URL}/reports/monthly/run?code=${COST_KEY}"
+```
+
 If you want to force one immediate execution after deployment, temporarily set
 `MONTHLY_REPORT_RUN_ON_STARTUP=true`, restart the Function App once, then set it
 back to `false`.
