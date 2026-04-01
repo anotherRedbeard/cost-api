@@ -15,7 +15,7 @@ import azure.functions as func
 import requests
 from azure.core.exceptions import ResourceExistsError
 from azure.identity import DefaultAzureCredential
-from azure.storage.blob import BlobServiceClient
+from azure.storage.blob import BlobServiceClient, ContentSettings
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 
@@ -578,7 +578,7 @@ def _upload_report_to_blob(
         name=blob_name,
         data=report_html.encode("utf-8"),
         overwrite=True,
-        content_type="text/html; charset=utf-8",
+        content_settings=ContentSettings(content_type="text/html; charset=utf-8"),
     )
     logging.info("Uploaded monthly report blob %s successfully.", blob_name)
 

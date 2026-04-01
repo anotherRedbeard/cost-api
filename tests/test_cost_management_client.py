@@ -5,6 +5,7 @@ from datetime import date
 from unittest.mock import Mock, patch
 
 import azure.functions as func
+from azure.storage.blob import ContentSettings
 
 from function_app import (
     CostManagementApiError,
@@ -199,7 +200,7 @@ class FunctionAppHelpersTests(unittest.TestCase):
             name="cost-report-2026-02.html",
             data=b"<html>report</html>",
             overwrite=True,
-            content_type="text/html; charset=utf-8",
+            content_settings=ContentSettings(content_type="text/html; charset=utf-8"),
         )
 
     def test_monthly_cost_report_uploads_blob_when_configured(self) -> None:
