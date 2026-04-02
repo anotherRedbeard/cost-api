@@ -22,6 +22,8 @@ var appInsightsName = take('appi-${environmentName}-cost-${suffix}', 60)
 var workspaceName = take('log-${environmentName}-cost-${suffix}', 63)
 var deploymentIdentityName = take('uai-${environmentName}-deploy-${suffix}', 64)
 var deploymentStorageContainerName = take('app-package-${toLower(environmentName)}-${suffix}', 63)
+var communicationServiceName = take('acs-${environmentName}-cost-${suffix}', 63)
+var emailServiceName = take('email-${environmentName}-cost-${suffix}', 63)
 var storageBlobDataOwnerRoleId = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
 var storageBlobDataContributorRoleId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
 var storageQueueDataContributorRoleId = '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
@@ -84,6 +86,38 @@ resource applicationInsights 'Microsoft.Insights/components@2020-02-02' = {
   properties: {
     Application_Type: 'web'
     WorkspaceResourceId: logAnalyticsWorkspace.id
+  }
+}
+
+resource emailService 'Microsoft.Communication/emailServices@2023-04-01' = {
+  name: emailServiceName
+  location: 'global'
+  tags: tags
+  properties: {
+    dataLocation: 'United States'
+  }
+}
+
+resource emailDomain 'Microsoft.Communication/emailServices/domains@2023-04-01' = {
+  parent: emailService
+  name: 'AzureManagedDomain'
+  location: 'global'
+  tags: tags
+  properties: {
+    domainManagement: 'AzureManaged'
+    userEngagementTracking: 'Disabled'
+  }
+}
+
+resource communicationService 'Microsoft.Communication/communicationServices@2023-04-01' = {
+  name: communicationServiceName
+  location: 'global'
+  tags: tags
+  properties: {
+    dataLocation: 'United States'
+    linkedDomains: [
+      emailDomain.id
+    ]
   }
 }
 
@@ -194,6 +228,8 @@ resource functionAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
   parent: functionApp
   name: 'appsettings'
   properties: {
+    ACS_CONNECTION_STRING: communicationService.listKeys().primaryConnectionString
+    ACS_SENDER_EMAIL: 'DoNotReply@${emailDomain.properties.mailFromSenderDomain}'
     APPLICATIONINSIGHTS_CONNECTION_STRING: applicationInsights.properties.ConnectionString
     AzureWebJobsFeatureFlags: 'EnableWorkerIndexing'
     AzureWebJobsStorage__accountName: storageAccount.name

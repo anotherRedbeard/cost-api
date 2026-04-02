@@ -5,4 +5,5 @@
 azure-functions
 azure-identity>=1.17.1
 azure-storage-blob>=12.26.0
+azure-communication-email>=1.0.0
 requests>=2.32.3

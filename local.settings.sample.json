@@ -9,6 +9,12 @@
     "MONTHLY_REPORT_SUBSCRIPTION_ID": "",
     "MONTHLY_REPORT_GRANULARITY": "None",
     "MONTHLY_REPORT_BLOB_CONTAINER": "monthly-cost-reports",
+    "TENANT_ID": "",
+    "CLIENT_ID": "",
+    "CLIENT_SECRET": "",
+    "ACS_CONNECTION_STRING": "",
+    "ACS_SENDER_EMAIL": "",
+    "ACS_RECIPIENT_EMAIL": "",
     "PYTHON_ENABLE_INIT_INDEXING": "1",
     "languageWorkers__python__defaultExecutablePath": "/full/path/to/your/project/.venv/bin/python"
   }
