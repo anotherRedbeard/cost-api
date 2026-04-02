@@ -201,9 +201,7 @@ resource functionAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     AzureWebJobsStorage__credential: 'managedidentity'
     FUNCTIONS_EXTENSION_VERSION: '~4'
     MONTHLY_REPORT_BLOB_CONTAINER: 'monthly-cost-reports'
-    MONTHLY_REPORT_DELIVERY: 'blob'
     MONTHLY_REPORT_GRANULARITY: monthlyReportGranularity
-    MONTHLY_REPORT_RECIPIENT: 'andrew.redman@microsoft.com'
     MONTHLY_REPORT_RUN_ON_STARTUP: 'false'
     MONTHLY_REPORT_SCHEDULE: '0 0 9 1 * *'
     MONTHLY_REPORT_SUBSCRIPTION_ID: subscription().subscriptionId

@@ -6,17 +6,9 @@
     "AzureWebJobsFeatureFlags": "EnableWorkerIndexing",
     "MONTHLY_REPORT_SCHEDULE": "0 0 9 1 * *",
     "MONTHLY_REPORT_RUN_ON_STARTUP": "false",
-    "MONTHLY_REPORT_DELIVERY": "blob",
     "MONTHLY_REPORT_SUBSCRIPTION_ID": "",
-    "MONTHLY_REPORT_RECIPIENT": "andrew.redman@microsoft.com",
     "MONTHLY_REPORT_GRANULARITY": "None",
     "MONTHLY_REPORT_BLOB_CONTAINER": "monthly-cost-reports",
-    "SMTP_HOST": "",
-    "SMTP_PORT": "587",
-    "SMTP_USERNAME": "",
-    "SMTP_PASSWORD": "",
-    "SMTP_FROM": "",
-    "SMTP_STARTTLS": "true",
     "PYTHON_ENABLE_INIT_INDEXING": "1",
     "languageWorkers__python__defaultExecutablePath": "/full/path/to/your/project/.venv/bin/python"
   }

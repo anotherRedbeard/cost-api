@@ -16,7 +16,6 @@ Each run:
 - aggregates `PreTaxCost`
 - renders a simple HTML report
 - writes the report to the `monthly-cost-reports` blob container by default
-- can optionally email the same HTML file instead
 
 This keeps the demo focused on the core Cost API pattern instead of supporting lots of request shapes.
 
@@ -128,21 +127,10 @@ The app uses these settings:
 
 - `MONTHLY_REPORT_SCHEDULE=0 0 9 1 * *`
 - `MONTHLY_REPORT_RUN_ON_STARTUP=false`
-- `MONTHLY_REPORT_DELIVERY=blob`
 - `MONTHLY_REPORT_SUBSCRIPTION_ID=<subscription-id>`
 - `MONTHLY_REPORT_GRANULARITY=None`
 - `MONTHLY_REPORT_BLOB_CONTAINER=monthly-cost-reports`
-- `MONTHLY_REPORT_RECIPIENT=andrew.redman@microsoft.com`
 
-If you want email delivery instead, set:
-
-- `MONTHLY_REPORT_DELIVERY=email`
-- `SMTP_HOST`
-- `SMTP_PORT`
-- `SMTP_USERNAME`
-- `SMTP_PASSWORD`
-- `SMTP_FROM`
-- `SMTP_STARTTLS`
 
 ## Azure deployment workflow
 

@@ -21,7 +21,6 @@ from function_app import (
     _render_html_report,
     _resolve_previous_month_range,
     _run_monthly_report,
-    _send_email_attachment,
     _upload_report_to_blob,
     app,
     monthly_cost_report,
@@ -139,38 +138,6 @@ class FunctionAppHelpersTests(unittest.TestCase):
             "cost-report-2026-02-abc12345.html",
         )
 
-    def test_send_email_attachment_uses_smtp(self) -> None:
-        smtp_client = Mock()
-        smtp_context_manager = Mock()
-        smtp_context_manager.__enter__ = Mock(return_value=smtp_client)
-        smtp_context_manager.__exit__ = Mock(return_value=False)
-
-        with patch.dict(
-            os.environ,
-            {
-                "SMTP_HOST": "smtp.example.com",
-                "SMTP_PORT": "587",
-                "SMTP_FROM": "reports@example.com",
-                "SMTP_USERNAME": "reports@example.com",
-                "SMTP_PASSWORD": "secret",
-                "SMTP_STARTTLS": "true",
-            },
-            clear=False,
-        ), patch(
-            "function_app.smtplib.SMTP",
-            return_value=smtp_context_manager,
-        ):
-            _send_email_attachment(
-                recipient="andrew.redman@microsoft.com",
-                subject="Azure Cost Report - 2026-02",
-                attachment_name="cost-report-2026-02.html",
-                attachment_body="<html>report</html>",
-            )
-
-        smtp_client.starttls.assert_called_once()
-        smtp_client.login.assert_called_once_with("reports@example.com", "secret")
-        smtp_client.send_message.assert_called_once()
-
     def test_get_blob_service_client_prefers_connection_string(self) -> None:
         with patch.dict(
             os.environ,
@@ -212,7 +179,6 @@ class FunctionAppHelpersTests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "MONTHLY_REPORT_DELIVERY": "blob",
                 "MONTHLY_REPORT_SUBSCRIPTION_ID": "sub-123",
             },
             clear=False,
@@ -254,7 +220,6 @@ class FunctionAppHelpersTests(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "MONTHLY_REPORT_DELIVERY": "blob",
                 "MONTHLY_REPORT_SUBSCRIPTION_ID": "sub-123",
             },
             clear=False,

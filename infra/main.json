@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "9031510432361537362"
+      "templateHash": "17159839583227350281"
     }
   },
   "parameters": {
@@ -269,9 +269,7 @@
         "AzureWebJobsStorage__credential": "managedidentity",
         "FUNCTIONS_EXTENSION_VERSION": "~4",
         "MONTHLY_REPORT_BLOB_CONTAINER": "monthly-cost-reports",
-        "MONTHLY_REPORT_DELIVERY": "blob",
         "MONTHLY_REPORT_GRANULARITY": "[parameters('monthlyReportGranularity')]",
-        "MONTHLY_REPORT_RECIPIENT": "andrew.redman@microsoft.com",
         "MONTHLY_REPORT_RUN_ON_STARTUP": "false",
         "MONTHLY_REPORT_SCHEDULE": "0 0 9 1 * *",
         "MONTHLY_REPORT_SUBSCRIPTION_ID": "[subscription().subscriptionId]",

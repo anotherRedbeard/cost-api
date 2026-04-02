@@ -2,13 +2,10 @@ import html
 import json
 import logging
 import os
-import smtplib
-import ssl
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from email.message import EmailMessage
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
@@ -23,7 +20,6 @@ app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 MANAGEMENT_SCOPE = "https://management.azure.com/.default"
 COST_QUERY_API_VERSION = "2025-03-01"
 COST_QUERY_CACHE_TTL_SECONDS = 300
-DEFAULT_MONTHLY_REPORT_RECIPIENT = "andrew.redman@microsoft.com"
 DEFAULT_MONTHLY_REPORT_GRANULARITY = "None"
 
 
@@ -497,62 +493,6 @@ def _upload_report_to_blob(
     logging.info("Uploaded monthly report blob %s successfully.", blob_name)
 
 
-def _send_email_attachment(
-    recipient: str,
-    subject: str,
-    attachment_name: str,
-    attachment_body: str,
-) -> None:
-    smtp_host = _first_value(os.getenv("SMTP_HOST"))
-    smtp_from = _first_value(os.getenv("SMTP_FROM"), os.getenv("SMTP_USERNAME"))
-    smtp_username = _first_value(os.getenv("SMTP_USERNAME"))
-    smtp_password = os.getenv("SMTP_PASSWORD")
-    smtp_port = _get_int_setting("SMTP_PORT", 587)
-    smtp_starttls = _get_bool_setting("SMTP_STARTTLS", smtp_port != 465)
-
-    if not smtp_host:
-        raise CostManagementConfigError("SMTP_HOST must be configured for monthly email.")
-    if not smtp_from:
-        raise CostManagementConfigError(
-            "SMTP_FROM or SMTP_USERNAME must be configured for monthly email."
-        )
-    if smtp_password and not smtp_username:
-        raise CostManagementConfigError(
-            "SMTP_USERNAME is required when SMTP_PASSWORD is configured."
-        )
-
-    message = EmailMessage()
-    message["Subject"] = subject
-    message["From"] = smtp_from
-    message["To"] = recipient
-    message.set_content("Attached is your monthly Azure Cost Management report.")
-    message.add_attachment(
-        attachment_body.encode("utf-8"),
-        maintype="text",
-        subtype="html",
-        filename=attachment_name,
-    )
-
-    ssl_context = ssl.create_default_context()
-
-    if smtp_port == 465:
-        with smtplib.SMTP_SSL(
-            smtp_host,
-            smtp_port,
-            timeout=30,
-            context=ssl_context,
-        ) as smtp_client:
-            if smtp_username and smtp_password:
-                smtp_client.login(smtp_username, smtp_password)
-            smtp_client.send_message(message)
-        return
-
-    with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as smtp_client:
-        if smtp_starttls:
-            smtp_client.starttls(context=ssl_context)
-        if smtp_username and smtp_password:
-            smtp_client.login(smtp_username, smtp_password)
-        smtp_client.send_message(message)
 
 
 def _run_monthly_report() -> Dict[str, Any]:
@@ -562,10 +502,6 @@ def _run_monthly_report() -> Dict[str, Any]:
             "MONTHLY_REPORT_SUBSCRIPTION_ID must be configured for the monthly report."
         )
 
-    recipient = _first_value(
-        os.getenv("MONTHLY_REPORT_RECIPIENT"),
-        DEFAULT_MONTHLY_REPORT_RECIPIENT,
-    )
     granularity = _normalize_granularity(
         _first_value(
             os.getenv("MONTHLY_REPORT_GRANULARITY"),
@@ -573,14 +509,12 @@ def _run_monthly_report() -> Dict[str, Any]:
         )
     )
     start_date, end_date = _resolve_previous_month_range()
-    delivery = _first_value(os.getenv("MONTHLY_REPORT_DELIVERY"), "blob")
     logging.info(
-        "Preparing monthly report for subscription %s covering %s to %s with granularity %s via %s.",
+        "Preparing monthly report for subscription %s covering %s to %s with granularity %s.",
         subscription_id,
         start_date,
         end_date,
         granularity,
-        delivery,
     )
     result = _query_cost_for_period(
         subscription_id=subscription_id,
@@ -590,54 +524,30 @@ def _run_monthly_report() -> Dict[str, Any]:
     )
     report_html = _render_html_report(result)
     report_filename = _build_monthly_report_filename(start_date)
-    report_subject = f"Azure Cost Report - {start_date[:7]}"
-
-    if delivery == "blob":
-        container_name = _first_value(
-            os.getenv("MONTHLY_REPORT_BLOB_CONTAINER"),
-            "monthly-cost-reports",
-        )
-        _upload_report_to_blob(
-            container_name=container_name,
-            blob_name=report_filename,
-            report_html=report_html,
-        )
-        logging.info(
-            "Uploaded monthly cost report %s to blob container %s.",
-            report_filename,
-            container_name,
-        )
-        return {
-            "status": "ok",
-            "delivery": "blob",
-            "container": container_name,
-            "reportFilename": report_filename,
-            "startDate": start_date,
-            "endDate": end_date,
-            "subscriptionId": subscription_id,
-        }
-
-    if delivery != "email":
-        raise CostManagementConfigError(
-            "MONTHLY_REPORT_DELIVERY must be either 'blob' or 'email'."
-        )
-
-    _send_email_attachment(
-        recipient=recipient,
-        subject=report_subject,
-        attachment_name=report_filename,
-        attachment_body=report_html,
+    container_name = _first_value(
+        os.getenv("MONTHLY_REPORT_BLOB_CONTAINER"),
+        "monthly-cost-reports",
     )
-    logging.info("Sent monthly cost report to %s for %s.", recipient, start_date[:7])
+    _upload_report_to_blob(
+        container_name=container_name,
+        blob_name=report_filename,
+        report_html=report_html,
+    )
+    logging.info(
+        "Uploaded monthly cost report %s to blob container %s.",
+        report_filename,
+        container_name,
+    )
     return {
         "status": "ok",
-        "delivery": "email",
-        "recipient": recipient,
+        "delivery": "blob",
+        "container": container_name,
         "reportFilename": report_filename,
         "startDate": start_date,
         "endDate": end_date,
         "subscriptionId": subscription_id,
     }
+
 
 
 @app.timer_trigger(
@@ -648,9 +558,8 @@ def _run_monthly_report() -> Dict[str, Any]:
 )
 def monthly_cost_report(monthly_timer: func.TimerRequest) -> None:
     logging.info(
-        "monthly_cost_report triggered. past_due=%s delivery=%s",
+        "monthly_cost_report triggered. past_due=%s",
         monthly_timer.past_due,
-        _first_value(os.getenv("MONTHLY_REPORT_DELIVERY"), "blob"),
     )
     if monthly_timer.past_due:
         logging.warning("The monthly cost report timer trigger is running late.")
