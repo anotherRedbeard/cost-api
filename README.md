@@ -115,9 +115,12 @@ A successful run returns JSON like:
   "status": "ok",
   "delivery": "blob",
   "container": "monthly-cost-reports",
-  "reportFilename": "cost-report-2026-03.html"
+  "reportFilename": "cost-report-2026-03-<run-id>.html"
 }
 ```
+
+Each run now appends a short unique ID to the filename, so repeated manual or timer
+runs create new blobs instead of overwriting the previous report.
 
 ## Monthly report settings
 

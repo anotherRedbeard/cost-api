@@ -11,6 +11,7 @@ from function_app import (
     CostManagementApiError,
     CostManagementConfigError,
     _build_monthly_report_filename,
+    _build_report_run_id,
     _build_query_definition,
     _clear_cached_cost_queries,
     _get_blob_service_client,
@@ -126,10 +127,16 @@ class FunctionAppHelpersTests(unittest.TestCase):
             ("2025-12-01", "2025-12-31"),
         )
 
-    def test_build_monthly_report_filename_uses_year_month(self) -> None:
+    def test_build_report_run_id_returns_short_hex_identifier(self) -> None:
+        report_run_id = _build_report_run_id()
+
+        self.assertEqual(len(report_run_id), 8)
+        self.assertRegex(report_run_id, r"^[0-9a-f]{8}$")
+
+    def test_build_monthly_report_filename_uses_year_month_and_run_id(self) -> None:
         self.assertEqual(
-            _build_monthly_report_filename("2026-02-01"),
-            "cost-report-2026-02.html",
+            _build_monthly_report_filename("2026-02-01", run_id="abc12345"),
+            "cost-report-2026-02-abc12345.html",
         )
 
     def test_send_email_attachment_uses_smtp(self) -> None:
@@ -226,7 +233,8 @@ class FunctionAppHelpersTests(unittest.TestCase):
         ) as query_cost_for_period, patch(
             "function_app._upload_report_to_blob"
         ) as upload_report_to_blob:
-            result = _run_monthly_report()
+            with patch("function_app._build_report_run_id", return_value="abc12345"):
+                result = _run_monthly_report()
 
         query_cost_for_period.assert_called_once_with(
             subscription_id="sub-123",
@@ -236,7 +244,7 @@ class FunctionAppHelpersTests(unittest.TestCase):
         )
         upload_report_to_blob.assert_called_once_with(
             container_name="monthly-cost-reports",
-            blob_name="cost-report-2026-02.html",
+            blob_name="cost-report-2026-02-abc12345.html",
             report_html=unittest.mock.ANY,
         )
         self.assertEqual(result["status"], "ok")
@@ -271,7 +279,7 @@ class FunctionAppHelpersTests(unittest.TestCase):
                 "status": "ok",
                 "delivery": "blob",
                 "container": "monthly-cost-reports",
-                "reportFilename": "cost-report-2026-02.html",
+                "reportFilename": "cost-report-2026-02-abc12345.html",
                 "startDate": "2026-02-01",
                 "endDate": "2026-02-28",
                 "subscriptionId": "sub-123",
@@ -286,7 +294,7 @@ class FunctionAppHelpersTests(unittest.TestCase):
                 "status": "ok",
                 "delivery": "blob",
                 "container": "monthly-cost-reports",
-                "reportFilename": "cost-report-2026-02.html",
+                "reportFilename": "cost-report-2026-02-abc12345.html",
                 "startDate": "2026-02-01",
                 "endDate": "2026-02-28",
                 "subscriptionId": "sub-123",
@@ -307,7 +315,7 @@ class FunctionAppHelpersTests(unittest.TestCase):
                 "status": "ok",
                 "delivery": "blob",
                 "container": "monthly-cost-reports",
-                "reportFilename": "cost-report-2026-02.html",
+                "reportFilename": "cost-report-2026-02-abc12345.html",
                 "startDate": "2026-02-01",
                 "endDate": "2026-02-28",
                 "subscriptionId": "sub-123",

@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from email.message import EmailMessage
 from typing import Any, Dict, List, Optional, Tuple
+from uuid import uuid4
 
 import azure.functions as func
 import requests
@@ -431,8 +432,13 @@ def _resolve_previous_month_range(
     )
 
 
-def _build_monthly_report_filename(start_date: str) -> str:
-    return f"cost-report-{start_date[:7]}.html"
+def _build_report_run_id() -> str:
+    return uuid4().hex[:8]
+
+
+def _build_monthly_report_filename(start_date: str, run_id: Optional[str] = None) -> str:
+    report_run_id = run_id or _build_report_run_id()
+    return f"cost-report-{start_date[:7]}-{report_run_id}.html"
 
 
 def _get_blob_service_client() -> BlobServiceClient:
