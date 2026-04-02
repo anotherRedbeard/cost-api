@@ -36,6 +36,52 @@ az role assignment create \
   --scope /subscriptions/<subscription-id>
 ```
 
+### Service principal setup (for email cost report)
+
+If you need a service principal with a client secret (e.g. for the multi-subscription email report), create one with the following commands.
+
+Create the app registration:
+
+```bash
+az ad app create --display-name "<app-name>" --query "{appId: appId, objectId: id}" -o json
+```
+
+Create the service principal:
+
+```bash
+az ad sp create --id <app-id> --query "{servicePrincipalId: id, appId: appId}" -o json
+```
+
+Generate a client secret (6-month expiration):
+
+```bash
+end_date=$(date -v+6m -u +"%Y-%m-%dT%H:%M:%SZ")  # macOS
+# end_date=$(date -d "+6 months" -u +"%Y-%m-%dT%H:%M:%SZ")  # Linux
+
+az ad app credential reset \
+  --id <app-id> \
+  --end-date "$end_date" \
+  --query "{clientId: appId, clientSecret: password, tenantId: tenant}" \
+  -o json
+```
+
+> **Save the `clientSecret` immediately** — it cannot be retrieved later.
+
+Assign Cost Management Reader on each subscription:
+
+```bash
+az role assignment create \
+  --assignee <app-id> \
+  --role "Cost Management Reader" \
+  --scope /subscriptions/<subscription-id>
+```
+
+Set these values in the Function App configuration:
+
+- `TENANT_ID`
+- `CLIENT_ID`
+- `CLIENT_SECRET`
+
 ### Billing visibility settings
 
 Some `403` problems are caused by billing settings rather than code.

@@ -484,6 +484,91 @@ def send_email_with_csv_attachment(csv_content, filename, start_date_display, en
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise
 
+def _run_email_cost_report():
+    """Shared logic for the email cost report, used by both timer and HTTP triggers."""
+    # Step 1: Validate environment variables
+    logger.info("Step 1: Validating environment variables...")
+    required_vars = [
+        "TENANT_ID", "CLIENT_ID", "CLIENT_SECRET",
+        "ACS_CONNECTION_STRING", "ACS_SENDER_EMAIL", "ACS_RECIPIENT_EMAIL"
+    ]
+    missing_vars = [var for var in required_vars if not os.environ.get(var)]
+    if missing_vars:
+        raise ValueError(f"Missing environment variables: {', '.join(missing_vars)}")
+    logger.info(" All environment variables present")
+
+    # Step 2: Get access token
+    logger.info("Step 2: Acquiring Azure access token...")
+    token = get_access_token()
+
+    # Step 3: Calculate date range
+    logger.info("Step 3: Calculating date range...")
+    start_date_api, end_date_api, start_date_display, end_date_display = get_previous_month_range()
+    logger.info(f"Date range: {start_date_display} to {end_date_display}")
+
+    # Step 4: Fetch subscriptions
+    logger.info("Step 4: Fetching all subscriptions...")
+    subscriptions = get_all_subscriptions(token)
+    if not subscriptions:
+        raise Exception("No subscriptions found - the service principal does not have access to any subscriptions")
+    logger.info(f"Found {len(subscriptions)} subscription(s)")
+
+    # Step 5: Fetch cost data for each subscription
+    logger.info("Step 5: Fetching cost data for all subscriptions...")
+    all_costs_data = []
+
+    for idx, subscription in enumerate(subscriptions, 1):
+        sub_id = subscription.get("subscriptionId")
+        sub_name = subscription.get("displayName", "Unknown")
+        logger.info(f"  [{idx}/{len(subscriptions)}] Processing: {sub_name} ({sub_id})")
+
+        cost_data, status_info = fetch_cost_for_subscription(token, sub_id, start_date_api, end_date_api)
+
+        all_costs_data.append({
+            "subscription_id": sub_id,
+            "subscription_name": sub_name,
+            "cost_data": cost_data,
+            "status_info": status_info
+        })
+
+    # Step 5 summary
+    success_count = sum(1 for item in all_costs_data if item["status_info"]["success"])
+    failed_count = len(all_costs_data) - success_count
+    logger.info(f"Step 5 Summary:  {success_count} succeeded |  {failed_count} failed | Total: {len(all_costs_data)}")
+
+    if failed_count > 0:
+        logger.warning("Failed subscriptions detail:")
+        for item in all_costs_data:
+            if not item["status_info"]["success"]:
+                logger.warning(
+                    f"  - {item['subscription_name']}: "
+                    f"HTTP {item['status_info']['status_code']} — {item['status_info']['reason']}"
+                )
+
+    # Step 6: Generate CSV
+    logger.info("Step 6: Generating CSV report...")
+    csv_content, total_cost = generate_csv(all_costs_data, start_date_display, end_date_display)
+    filename = f"azure_cost_report_{start_date_display}_to_{end_date_display}.csv"
+    logger.info("CSV report generated")
+
+    # Step 7: Send email
+    logger.info("Step 7: Sending email with CSV attachment...")
+    send_email_with_csv_attachment(
+        csv_content, filename, start_date_display, end_date_display,
+        total_cost, len(all_costs_data), all_costs_data
+    )
+    logger.info("Email sent successfully")
+
+    return {
+        "status": "ok",
+        "totalCost": f"${total_cost:,.2f} USD",
+        "subscriptions": len(all_costs_data),
+        "succeeded": success_count,
+        "failed": failed_count,
+        "reportFile": filename
+    }
+
+
 @app.function_name(name="MonthlyReport")
 @app.timer_trigger(schedule="0 0 0 1 * *", 
               arg_name="mytimer",
@@ -500,84 +585,13 @@ def main(mytimer: func.TimerRequest) -> None:
     logger.info(f'Timer trigger fired at: {datetime.datetime.utcnow()} UTC')
 
     try:
-        # Step 1: Validate environment variables
-        logger.info("Step 1: Validating environment variables...")
-        required_vars = [
-            "TENANT_ID", "CLIENT_ID", "CLIENT_SECRET",
-            "ACS_CONNECTION_STRING", "ACS_SENDER_EMAIL", "ACS_RECIPIENT_EMAIL"
-        ]
-        missing_vars = [var for var in required_vars if not os.environ.get(var)]
-        if missing_vars:
-            raise ValueError(f"Missing environment variables: {', '.join(missing_vars)}")
-        logger.info(" All environment variables present")
-
-        # Step 2: Get access token
-        logger.info("Step 2: Acquiring Azure access token...")
-        token = get_access_token()
-
-        # Step 3: Calculate date range
-        logger.info("Step 3: Calculating date range...")
-        start_date_api, end_date_api, start_date_display, end_date_display = get_previous_month_range()
-        logger.info(f"Date range: {start_date_display} to {end_date_display}")
-
-        # Step 4: Fetch subscriptions
-        logger.info("Step 4: Fetching all subscriptions...")
-        subscriptions = get_all_subscriptions(token)
-        if not subscriptions:
-            raise Exception("No subscriptions found - the service principal does not have access to any subscriptions")
-        logger.info(f"Found {len(subscriptions)} subscription(s)")
-
-        # Step 5: Fetch cost data for each subscription
-        logger.info("Step 5: Fetching cost data for all subscriptions...")
-        all_costs_data = []
-
-        for idx, subscription in enumerate(subscriptions, 1):
-            sub_id = subscription.get("subscriptionId")
-            sub_name = subscription.get("displayName", "Unknown")
-            logger.info(f"  [{idx}/{len(subscriptions)}] Processing: {sub_name} ({sub_id})")
-
-            cost_data, status_info = fetch_cost_for_subscription(token, sub_id, start_date_api, end_date_api)
-
-            all_costs_data.append({
-                "subscription_id": sub_id,
-                "subscription_name": sub_name,
-                "cost_data": cost_data,
-                "status_info": status_info
-            })
-
-        # Step 5 summary
-        success_count = sum(1 for item in all_costs_data if item["status_info"]["success"])
-        failed_count = len(all_costs_data) - success_count
-        logger.info(f"Step 5 Summary:  {success_count} succeeded |  {failed_count} failed | Total: {len(all_costs_data)}")
-
-        if failed_count > 0:
-            logger.warning("Failed subscriptions detail:")
-            for item in all_costs_data:
-                if not item["status_info"]["success"]:
-                    logger.warning(
-                        f"  - {item['subscription_name']}: "
-                        f"HTTP {item['status_info']['status_code']} — {item['status_info']['reason']}"
-                    )
-
-        # Step 6: Generate CSV
-        logger.info("Step 6: Generating CSV report...")
-        csv_content, total_cost = generate_csv(all_costs_data, start_date_display, end_date_display)
-        filename = f"azure_cost_report_{start_date_display}_to_{end_date_display}.csv"
-        logger.info("CSV report generated")
-
-        # Step 7: Send email
-        logger.info("Step 7: Sending email with CSV attachment...")
-        send_email_with_csv_attachment(
-            csv_content, filename, start_date_display, end_date_display,
-            total_cost, len(all_costs_data), all_costs_data
-        )
-        logger.info("Email sent successfully")
+        result = _run_email_cost_report()
 
         logger.info('=' * 80)
         logger.info(' Execution completed successfully!')
-        logger.info(f'   Total Cost    : ${total_cost:,.2f} USD')
-        logger.info(f'   Subscriptions : {len(all_costs_data)} ( {success_count} OK |  {failed_count} failed)')
-        logger.info(f'   Report File   : {filename}')
+        logger.info(f'   Total Cost    : {result["totalCost"]}')
+        logger.info(f'   Subscriptions : {result["subscriptions"]} ( {result["succeeded"]} OK |  {result["failed"]} failed)')
+        logger.info(f'   Report File   : {result["reportFile"]}')
         logger.info('=' * 80)
 
     except ValueError as ve:
@@ -602,3 +616,34 @@ def main(mytimer: func.TimerRequest) -> None:
         logger.error(f'   Traceback: {traceback.format_exc()}')
         logger.error('=' * 80)
         raise
+
+
+@app.function_name(name="RunEmailCostReport")
+@app.route(route="reports/email/run", methods=["GET", "POST"])
+def run_email_cost_report(req: func.HttpRequest) -> func.HttpResponse:
+    """HTTP trigger to manually run the email cost report."""
+    logger.info('=' * 80)
+    logger.info('Azure Cost Report - HTTP Triggered Execution Starting')
+    logger.info('=' * 80)
+
+    try:
+        result = _run_email_cost_report()
+        return func.HttpResponse(
+            body=json.dumps(result, indent=2),
+            status_code=200,
+            mimetype="application/json"
+        )
+    except ValueError as ve:
+        return func.HttpResponse(
+            body=json.dumps({"error": str(ve)}, indent=2),
+            status_code=400,
+            mimetype="application/json"
+        )
+    except Exception as e:
+        logger.error(f"HTTP trigger failed: {type(e).__name__}: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return func.HttpResponse(
+            body=json.dumps({"error": f"{type(e).__name__}: {str(e)}"}, indent=2),
+            status_code=500,
+            mimetype="application/json"
+        )
