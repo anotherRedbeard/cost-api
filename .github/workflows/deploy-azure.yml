@@ -60,6 +60,13 @@ jobs:
       - name: Deploy Function App code
         run: ./scripts/deploy-function-code.sh
 
+      - name: Configure runtime app settings
+        env:
+          TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: ./scripts/configure-function-settings.sh
+
       - name: Grant Cost Management Reader
         run: ./scripts/assign-cost-reader.sh
 
