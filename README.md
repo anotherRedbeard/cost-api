@@ -76,6 +76,8 @@ az role assignment create \
   --scope /subscriptions/<subscription-id>
 ```
 
+> **Cost Management Reader** is the only role needed. It grants both subscription visibility (so the subscription appears in the list API) and read access to the Cost Management Query API. Repeat the command for each subscription you want in the report.
+
 Set these values in the Function App configuration:
 
 - `TENANT_ID`

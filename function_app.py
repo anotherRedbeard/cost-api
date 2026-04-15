@@ -7,6 +7,7 @@ import logging
 import traceback
 import csv
 import base64
+import time
 from azure.communication.email import EmailClient
 import azure.functions as func
 app = func.FunctionApp()
@@ -175,12 +176,19 @@ def get_all_subscriptions(token):
         raise
 
 
-def fetch_cost_for_subscription(token, subscription_id, start_date, end_date):
-    """Fetch cost data for a specific subscription with detailed status reporting"""
+def fetch_cost_for_subscription(token, subscription_id, start_date, end_date, max_retries=3):
+    """Fetch cost data for a specific subscription with detailed status reporting.
+
+    Passes a ClientType header so calls use a dedicated per-client quota rather
+    than the shared anonymous bucket, which is the primary cause of 429s when
+    many tenants omit this header.  Retries up to max_retries times on 429,
+    honouring the Retry-After header returned by the API.
+    """
     url = f"https://management.azure.com/subscriptions/{subscription_id}/providers/Microsoft.CostManagement/query?api-version=2023-03-01"
     headers = {
         "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "ClientType": "CostReportFunction",
     }
     body = {
         "type": "ActualCost",
@@ -209,63 +217,84 @@ def fetch_cost_for_subscription(token, subscription_id, start_date, end_date):
         "row_count": 0
     }
 
-    try:
-        response = requests.post(url, headers=headers, json=body, timeout=60)
-        status_info["status_code"] = response.status_code
+    attempt = 0
+    while attempt <= max_retries:
+        try:
+            response = requests.post(url, headers=headers, json=body, timeout=60)
+            status_info["status_code"] = response.status_code
 
-        if response.status_code == 200:
-            cost_data = response.json()
-            rows = cost_data.get("properties", {}).get("rows", [])
+            if response.status_code == 200:
+                cost_data = response.json()
+                rows = cost_data.get("properties", {}).get("rows", [])
 
-            status_info["success"] = True
-            status_info["row_count"] = len(rows)
-            status_info["has_data"] = len(rows) > 0
+                status_info["success"] = True
+                status_info["row_count"] = len(rows)
+                status_info["has_data"] = len(rows) > 0
 
-            if rows:
-                cost_value = rows[0][0] if len(rows[0]) > 0 else 0
-                currency = rows[0][1] if len(rows[0]) > 1 else "USD"
-                status_info["reason"] = f"Cost data retrieved: {cost_value:.2f} {currency}"
-                logger.info(f"    HTTP 200 OK | Cost: {cost_value:.2f} {currency} | Rows: {len(rows)}")
+                if rows:
+                    cost_value = rows[0][0] if len(rows[0]) > 0 else 0
+                    currency = rows[0][1] if len(rows[0]) > 1 else "USD"
+                    status_info["reason"] = f"Cost data retrieved: {cost_value:.2f} {currency}"
+                    logger.info(f"    HTTP 200 OK | Cost: {cost_value:.2f} {currency} | Rows: {len(rows)}")
+                else:
+                    # 200 returned but no rows — typical for $0 usage subscriptions
+                    status_info["reason"] = "HTTP 200 OK but no cost data for this period (possibly $0 usage or no resources)"
+                    logger.info(f"    HTTP 200 OK |   No rows returned (zero usage or no active resources)")
+
+                return cost_data, status_info
+
+            elif response.status_code == 429 and attempt < max_retries:
+                # Honour the Retry-After header; fall back to 60 s if absent
+                retry_after = int(
+                    response.headers.get(
+                        "x-ms-ratelimit-microsoft.costmanagement-clienttype-retry-after",
+                        response.headers.get("Retry-After", 60)
+                    )
+                )
+                attempt += 1
+                logger.warning(
+                    f"    HTTP 429 — rate limited (attempt {attempt}/{max_retries}). "
+                    f"Waiting {retry_after}s before retry..."
+                )
+                time.sleep(retry_after)
+                continue
+
             else:
-                # 200 returned but no rows — typical for $0 usage subscriptions
-                status_info["reason"] = "HTTP 200 OK but no cost data for this period (possibly $0 usage or no resources)"
-                logger.info(f"    HTTP 200 OK |   No rows returned (zero usage or no active resources)")
+                reason = get_status_reason(response.status_code, response.text)
+                status_info["reason"] = reason
 
-            return cost_data, status_info
+                logger.warning(f"    HTTP {response.status_code} FAILED")
+                logger.warning(f"      Reason : {reason}")
 
-        else:
-            reason = get_status_reason(response.status_code, response.text)
-            status_info["reason"] = reason
+                if response.status_code == 403:
+                    logger.warning(f"      Fix    : Assign 'Cost Management Reader' role to the service principal on subscription '{subscription_id}'")
+                elif response.status_code == 404:
+                    logger.warning(f"      Fix    : Verify the subscription is active and Microsoft.CostManagement provider is registered")
+                elif response.status_code == 429:
+                    logger.warning(f"      Fix    : Max retries exceeded — still rate limited after {max_retries} attempts")
 
-            logger.warning(f"    HTTP {response.status_code} FAILED")
-            logger.warning(f"      Reason : {reason}")
+                return {"properties": {"rows": [], "columns": []}}, status_info
 
-            if response.status_code == 403:
-                logger.warning(f"      Fix    : Assign 'Cost Management Reader' role to the service principal on subscription '{subscription_id}'")
-            elif response.status_code == 404:
-                logger.warning(f"      Fix    : Verify the subscription is active and Microsoft.CostManagement provider is registered")
-            elif response.status_code == 429:
-                logger.warning(f"      Fix    : Check the Retry-After response header or reduce execution frequency")
-
+        except requests.exceptions.Timeout:
+            status_info["status_code"] = "TIMEOUT"
+            status_info["reason"] = "Request did not complete within 60 seconds (subscription may be busy or network issue)"
+            logger.warning(f"    TIMEOUT | {status_info['reason']}")
             return {"properties": {"rows": [], "columns": []}}, status_info
 
-    except requests.exceptions.Timeout:
-        status_info["status_code"] = "TIMEOUT"
-        status_info["reason"] = "Request did not complete within 60 seconds (subscription may be busy or network issue)"
-        logger.warning(f"    TIMEOUT | {status_info['reason']}")
-        return {"properties": {"rows": [], "columns": []}}, status_info
+        except requests.exceptions.ConnectionError as e:
+            status_info["status_code"] = "CONNECTION_ERROR"
+            status_info["reason"] = f"Network connection failed: {str(e)}"
+            logger.warning(f"    CONNECTION ERROR | {status_info['reason']}")
+            return {"properties": {"rows": [], "columns": []}}, status_info
 
-    except requests.exceptions.ConnectionError as e:
-        status_info["status_code"] = "CONNECTION_ERROR"
-        status_info["reason"] = f"Network connection failed: {str(e)}"
-        logger.warning(f"    CONNECTION ERROR | {status_info['reason']}")
-        return {"properties": {"rows": [], "columns": []}}, status_info
+        except Exception as e:
+            status_info["status_code"] = "EXCEPTION"
+            status_info["reason"] = f"{type(e).__name__}: {str(e)}"
+            logger.warning(f"    EXCEPTION | {status_info['reason']}")
+            return {"properties": {"rows": [], "columns": []}}, status_info
 
-    except Exception as e:
-        status_info["status_code"] = "EXCEPTION"
-        status_info["reason"] = f"{type(e).__name__}: {str(e)}"
-        logger.warning(f"    EXCEPTION | {status_info['reason']}")
-        return {"properties": {"rows": [], "columns": []}}, status_info
+    # Should not be reached, but return empty data if loop exhausted
+    return {"properties": {"rows": [], "columns": []}}, status_info
 
 
 def generate_csv(all_costs_data, start_date_display, end_date_display):
