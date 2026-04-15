@@ -1,4 +1,4 @@
-function_app_cust.txt
+function_app_cust*.txt
 bin
 obj
 csx
