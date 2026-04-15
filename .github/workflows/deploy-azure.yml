@@ -62,9 +62,9 @@ jobs:
 
       - name: Configure runtime app settings
         env:
-          TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          TENANT_ID: ${{ secrets.COST_API_TENANT_ID }}
+          CLIENT_ID: ${{ secrets.COST_API_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.COST_API_CLIENT_SECRET }}
         run: ./scripts/configure-function-settings.sh
 
       - name: Grant Cost Management Reader
