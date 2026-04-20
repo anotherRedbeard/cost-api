@@ -354,7 +354,7 @@ def build_status_summary_html(all_costs_data):
     failed_count = len(all_costs_data) - success_count
 
     rows_html = ""
-    for item in all_costs_data:
+    for i, item in enumerate(all_costs_data):
         sub_name = item["subscription_name"]
         sub_id = item["subscription_id"]
         status_info = item.get("status_info", {})
@@ -362,35 +362,40 @@ def build_status_summary_html(all_costs_data):
         success = status_info.get("success", False)
         reason = status_info.get("reason", "No information available")
 
-        row_color = "#e8f5e9" if success else "#ffebee"
-        status_icon = "" if success else ""
+        row_bg = "#ffffff" if i % 2 == 0 else "#f8fafc"
+        badge_bg = "#dcfce7" if success else "#fee2e2"
+        badge_color = "#166534" if success else "#991b1b"
+        badge_label = f"✓ HTTP {status_code}" if success else f"✗ HTTP {status_code}"
 
         rows_html += f"""
-        <tr style="background-color: {row_color};">
-            <td style="padding: 8px; border: 1px solid #ddd;">{status_icon} {sub_name}</td>
-            <td style="padding: 8px; border: 1px solid #ddd; font-family: monospace; font-size: 0.85em;">{sub_id}</td>
-            <td style="padding: 8px; border: 1px solid #ddd; text-align: center;"><strong>HTTP {status_code}</strong></td>
-            <td style="padding: 8px; border: 1px solid #ddd; font-size: 0.9em;">{reason}</td>
+        <tr style="background-color: {row_bg}; border-bottom: 1px solid #e2e8f0;">
+            <td style="padding: 12px 16px; font-weight: 500; color: #1e293b;">{sub_name}</td>
+            <td style="padding: 12px 16px; font-family: monospace; font-size: 0.8em; color: #64748b;">{sub_id}</td>
+            <td style="padding: 12px 16px; text-align: center;">
+                <span style="display: inline-block; background-color: {badge_bg}; color: {badge_color}; font-size: 0.78em; font-weight: 600; padding: 3px 10px; border-radius: 12px; white-space: nowrap;">{badge_label}</span>
+            </td>
+            <td style="padding: 12px 16px; font-size: 0.875em; color: #475569;">{reason}</td>
         </tr>
         """
 
-    summary_color = "#e8f5e9" if failed_count == 0 else "#fff3e0"
+    summary_bg = "#f0fdf4" if failed_count == 0 else "#fffbeb"
+    summary_border = "#86efac" if failed_count == 0 else "#fcd34d"
 
     return f"""
-    <div style="margin: 20px 0;">
-        <h3 style="color: #333;"> Subscription-wise API Status</h3>
-        <div style="background-color: {summary_color}; padding: 10px; border-radius: 4px; margin-bottom: 10px;">
-             Successful: <strong>{success_count}</strong> &nbsp;|&nbsp;
-             Failed / No Data: <strong>{failed_count}</strong> &nbsp;|&nbsp;
-            Total: <strong>{len(all_costs_data)}</strong>
+    <div style="margin: 28px 0;">
+        <h3 style="font-size: 1em; font-weight: 600; color: #1e293b; text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 12px 0;">Subscription API Status</h3>
+        <div style="background-color: {summary_bg}; border: 1px solid {summary_border}; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; font-size: 0.9em; color: #374151;">
+            <span style="margin-right: 20px;">✓ <strong>{success_count}</strong> Successful</span>
+            <span style="margin-right: 20px;">✗ <strong>{failed_count}</strong> Failed / No Data</span>
+            <span>&#9632; <strong>{len(all_costs_data)}</strong> Total</span>
         </div>
-        <table style="width: 100%; border-collapse: collapse; font-size: 0.9em;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 0.9em; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
             <thead>
-                <tr style="background-color: #0078d4; color: white;">
-                    <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">Subscription</th>
-                    <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">ID</th>
-                    <th style="padding: 10px; border: 1px solid #ddd; text-align: center;">Status Code</th>
-                    <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">Details / Reason</th>
+                <tr style="background-color: #1e293b; color: #f1f5f9;">
+                    <th style="padding: 12px 16px; text-align: left; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">Subscription</th>
+                    <th style="padding: 12px 16px; text-align: left; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">Subscription ID</th>
+                    <th style="padding: 12px 16px; text-align: center; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">Status</th>
+                    <th style="padding: 12px 16px; text-align: left; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">Details</th>
                 </tr>
             </thead>
             <tbody>
@@ -442,39 +447,65 @@ def send_email_with_csv_attachment(csv_content, filename, start_date_display, en
                 for item in failed_items
             )
             warning_html = f"""
-            <div style="background-color: #fff3e0; border-left: 4px solid #ff9800; padding: 15px; margin: 20px 0;">
-                <strong> {len(failed_items)} subscription(s) encountered issues:</strong>
-                <ul style="margin: 10px 0 0 0;">{failed_list}</ul>
+            <div style="background-color: #fffbeb; border: 1px solid #fcd34d; border-left: 4px solid #f59e0b; border-radius: 8px; padding: 16px 20px; margin: 24px 0;">
+                <p style="margin: 0 0 8px 0; font-weight: 700; color: #92400e; font-size: 0.95em;">⚠ {len(failed_items)} subscription(s) encountered issues</p>
+                <ul style="margin: 0; padding-left: 20px; color: #78350f; font-size: 0.875em; line-height: 1.7;">{failed_list}</ul>
             </div>
             """
 
         html_content = f"""
-        <html>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-            <div style="max-width: 800px; margin: 0 auto; padding: 20px;">
-                <h2 style="color: #0078d4; border-bottom: 2px solid #0078d4; padding-bottom: 10px;">
-                    Azure Cost Report - Scheduled
-                </h2>
+        <!DOCTYPE html>
+        <html lang="en">
+        <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+        <body style="margin: 0; padding: 0; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; color: #1e293b;">
+            <div style="max-width: 760px; margin: 32px auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.07);">
 
-                <p>Hello,</p>
-
-                <p>Please find your scheduled Azure cost report for the following period:</p>
-
-                <div style="background-color: #f5f5f5; padding: 15px; border-left: 4px solid #0078d4; margin: 20px 0;">
-                    <strong>Report Period:</strong> {start_date_display} to {end_date_display}<br>
-                    <strong>Total Subscriptions:</strong> {subscription_count}<br>
-                    <strong>Total Cost:</strong> <span style="font-size: 1.2em; color: #0078d4;">${total_cost:,.2f} USD</span>
+                <!-- Header -->
+                <div style="background: linear-gradient(135deg, #0f172a 0%, #1e40af 100%); padding: 36px 40px;">
+                    <p style="margin: 0 0 6px 0; font-size: 0.75em; font-weight: 600; color: #93c5fd; text-transform: uppercase; letter-spacing: 0.1em;">Azure Cost Management</p>
+                    <h1 style="margin: 0; font-size: 1.6em; font-weight: 700; color: #ffffff; line-height: 1.2;">Monthly Cost Report</h1>
+                    <p style="margin: 8px 0 0 0; font-size: 0.875em; color: #93c5fd;">{start_date_display} &mdash; {end_date_display}</p>
                 </div>
 
-                {warning_html}
-                {status_summary_html}
+                <!-- Body -->
+                <div style="padding: 36px 40px;">
+                    <p style="margin: 0 0 28px 0; font-size: 0.95em; color: #475569;">Here is your scheduled Azure cost summary. The full breakdown is attached as a CSV file.</p>
 
-                <p>The detailed cost breakdown is attached as a CSV file: <strong>{filename}</strong></p>
+                    <!-- Metric Cards -->
+                    <table style="width: 100%; border-collapse: separate; border-spacing: 12px; margin: 0 -12px 12px -12px;">
+                        <tr>
+                            <td style="width: 33%; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px 24px; vertical-align: top;">
+                                <p style="margin: 0 0 6px 0; font-size: 0.72em; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.07em;">Report Period</p>
+                                <p style="margin: 0; font-size: 0.95em; font-weight: 600; color: #1e293b;">{start_date_display}</p>
+                                <p style="margin: 2px 0 0 0; font-size: 0.8em; color: #64748b;">to {end_date_display}</p>
+                            </td>
+                            <td style="width: 33%; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px 24px; vertical-align: top;">
+                                <p style="margin: 0 0 6px 0; font-size: 0.72em; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.07em;">Subscriptions</p>
+                                <p style="margin: 0; font-size: 1.6em; font-weight: 700; color: #1e293b;">{subscription_count}</p>
+                            </td>
+                            <td style="width: 33%; background: linear-gradient(135deg, #1e40af, #2563eb); border-radius: 10px; padding: 20px 24px; vertical-align: top;">
+                                <p style="margin: 0 0 6px 0; font-size: 0.72em; font-weight: 600; color: #bfdbfe; text-transform: uppercase; letter-spacing: 0.07em;">Total Cost</p>
+                                <p style="margin: 0; font-size: 1.6em; font-weight: 700; color: #ffffff;">${total_cost:,.2f}</p>
+                                <p style="margin: 2px 0 0 0; font-size: 0.8em; color: #bfdbfe;">USD</p>
+                            </td>
+                        </tr>
+                    </table>
 
-                <p style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; color: #666; font-size: 0.9em;">
-                    This is an automated report generated by Azure Function (Timer Trigger).<br>
-                    Generated on: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")} UTC
-                </p>
+                    {warning_html}
+                    {status_summary_html}
+
+                    <p style="margin: 24px 0 0 0; font-size: 0.875em; color: #475569;">
+                        The detailed cost breakdown is attached: <strong style="color: #1e293b;">{filename}</strong>
+                    </p>
+                </div>
+
+                <!-- Footer -->
+                <div style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 20px 40px;">
+                    <p style="margin: 0; font-size: 0.8em; color: #94a3b8; line-height: 1.6;">
+                        Automated report &bull; Azure Function (Timer Trigger) &bull; Generated {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")} UTC
+                    </p>
+                </div>
+
             </div>
         </body>
         </html>
