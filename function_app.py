@@ -628,7 +628,7 @@ def _run_email_cost_report():
 
 
 @app.function_name(name="MonthlyReport")
-@app.timer_trigger(schedule="0 0 14 * * 1-5",
+@app.timer_trigger(schedule="%MONTHLY_REPORT_SCHEDULE%",
               arg_name="mytimer",
               run_on_startup=True) 
 def main(mytimer: func.TimerRequest) -> None:
