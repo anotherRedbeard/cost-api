@@ -107,18 +107,16 @@ def get_access_token():
         raise
 
 
-def get_previous_month_range():
-    """Calculate the first and last day of the previous month"""
+def get_current_month_range():
+    """Calculate the first day and today for the current month"""
     try:
         today = datetime.date.today()
-        first_day_this_month = today.replace(day=1)
-        last_day_prev_month = first_day_this_month - datetime.timedelta(days=1)
-        first_day_prev_month = last_day_prev_month.replace(day=1)
+        first_day = today.replace(day=1)
 
-        start_date_api = first_day_prev_month.isoformat()
-        end_date_api = last_day_prev_month.isoformat()
-        start_date_display = first_day_prev_month.strftime("%m-%d-%Y")
-        end_date_display = last_day_prev_month.strftime("%m-%d-%Y")
+        start_date_api = first_day.isoformat()
+        end_date_api = today.isoformat()
+        start_date_display = first_day.strftime("%m-%d-%Y")
+        end_date_display = today.strftime("%m-%d-%Y")
 
         logger.info(f"Date range calculated: {start_date_display} to {end_date_display}")
         return start_date_api, end_date_api, start_date_display, end_date_display
@@ -563,7 +561,7 @@ def _run_email_cost_report():
 
     # Step 3: Calculate date range
     logger.info("Step 3: Calculating date range...")
-    start_date_api, end_date_api, start_date_display, end_date_display = get_previous_month_range()
+    start_date_api, end_date_api, start_date_display, end_date_display = get_current_month_range()
     logger.info(f"Date range: {start_date_display} to {end_date_display}")
 
     # Step 4: Fetch subscriptions
@@ -630,7 +628,7 @@ def _run_email_cost_report():
 
 
 @app.function_name(name="MonthlyReport")
-@app.timer_trigger(schedule="0 0 0 1 * *", 
+@app.timer_trigger(schedule="0 0 14 * * 1-5",
               arg_name="mytimer",
               run_on_startup=True) 
 def main(mytimer: func.TimerRequest) -> None:
