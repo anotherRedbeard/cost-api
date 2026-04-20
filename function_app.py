@@ -459,10 +459,10 @@ def send_email_with_csv_attachment(csv_content, filename, start_date_display, en
             <div style="max-width: 760px; margin: 32px auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.07);">
 
                 <!-- Header -->
-                <div style="background: linear-gradient(135deg, #0f172a 0%, #1e40af 100%); padding: 36px 40px;">
-                    <p style="margin: 0 0 6px 0; font-size: 0.75em; font-weight: 600; color: #93c5fd; text-transform: uppercase; letter-spacing: 0.1em;">Azure Cost Management</p>
+                <div style="background-color: #0078d4; padding: 36px 40px;">
+                    <p style="margin: 0 0 6px 0; font-size: 0.75em; font-weight: 600; color: #bfdbfe; text-transform: uppercase; letter-spacing: 0.1em;">Azure Cost Management</p>
                     <h1 style="margin: 0; font-size: 1.6em; font-weight: 700; color: #ffffff; line-height: 1.2;">Monthly Cost Report</h1>
-                    <p style="margin: 8px 0 0 0; font-size: 0.875em; color: #93c5fd;">{start_date_display} &mdash; {end_date_display}</p>
+                    <p style="margin: 8px 0 0 0; font-size: 0.875em; color: #dbeafe;">{start_date_display} &mdash; {end_date_display}</p>
                 </div>
 
                 <!-- Body -->
@@ -472,19 +472,19 @@ def send_email_with_csv_attachment(csv_content, filename, start_date_display, en
                     <!-- Metric Cards -->
                     <table style="width: 100%; border-collapse: separate; border-spacing: 12px; margin: 0 -12px 12px -12px;">
                         <tr>
-                            <td style="width: 33%; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px 24px; vertical-align: top;">
-                                <p style="margin: 0 0 6px 0; font-size: 0.72em; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.07em;">Report Period</p>
+                            <td style="width: 33%; background-color: #f0f6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 20px 24px; vertical-align: top;">
+                                <p style="margin: 0 0 6px 0; font-size: 0.72em; font-weight: 600; color: #2563eb; text-transform: uppercase; letter-spacing: 0.07em;">Report Period</p>
                                 <p style="margin: 0; font-size: 0.95em; font-weight: 600; color: #1e293b;">{start_date_display}</p>
                                 <p style="margin: 2px 0 0 0; font-size: 0.8em; color: #64748b;">to {end_date_display}</p>
                             </td>
-                            <td style="width: 33%; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 20px 24px; vertical-align: top;">
-                                <p style="margin: 0 0 6px 0; font-size: 0.72em; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.07em;">Subscriptions</p>
+                            <td style="width: 33%; background-color: #f0f6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 20px 24px; vertical-align: top;">
+                                <p style="margin: 0 0 6px 0; font-size: 0.72em; font-weight: 600; color: #2563eb; text-transform: uppercase; letter-spacing: 0.07em;">Subscriptions</p>
                                 <p style="margin: 0; font-size: 1.6em; font-weight: 700; color: #1e293b;">{subscription_count}</p>
                             </td>
-                            <td style="width: 33%; background: linear-gradient(135deg, #1e40af, #2563eb); border-radius: 10px; padding: 20px 24px; vertical-align: top;">
-                                <p style="margin: 0 0 6px 0; font-size: 0.72em; font-weight: 600; color: #bfdbfe; text-transform: uppercase; letter-spacing: 0.07em;">Total Cost</p>
+                            <td style="width: 33%; background-color: #0078d4; border-radius: 10px; padding: 20px 24px; vertical-align: top;">
+                                <p style="margin: 0 0 6px 0; font-size: 0.72em; font-weight: 600; color: #dbeafe; text-transform: uppercase; letter-spacing: 0.07em;">Total Cost</p>
                                 <p style="margin: 0; font-size: 1.6em; font-weight: 700; color: #ffffff;">${total_cost:,.2f}</p>
-                                <p style="margin: 2px 0 0 0; font-size: 0.8em; color: #bfdbfe;">USD</p>
+                                <p style="margin: 2px 0 0 0; font-size: 0.8em; color: #dbeafe;">USD</p>
                             </td>
                         </tr>
                     </table>
