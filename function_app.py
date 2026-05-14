@@ -150,6 +150,98 @@ def get_last_n_months(n=24):
         raise
 
 
+def _validate_environment():
+    """Validate all required environment variables are present."""
+    required_vars = [
+        "TENANT_ID", "CLIENT_ID", "CLIENT_SECRET",
+        "ACS_CONNECTION_STRING", "ACS_SENDER_EMAIL", "ACS_RECIPIENT_EMAIL"
+    ]
+    missing_vars = [var for var in required_vars if not os.environ.get(var)]
+    if missing_vars:
+        raise ValueError(f"Missing environment variables: {', '.join(missing_vars)}")
+    logger.info(" All environment variables present")
+
+
+
+def _get_token_and_subscriptions():
+    """Acquire an access token and return all accessible subscriptions.
+
+    Returns: (token, subscriptions)
+    Raises: Exception if no subscriptions are found.
+    """
+    logger.info("Acquiring Azure access token...")
+    token = get_access_token()
+    logger.info("Fetching all subscriptions...")
+    subscriptions = get_all_subscriptions(token)
+    if not subscriptions:
+        raise Exception("No subscriptions found - the service principal does not have access to any subscriptions")
+    logger.info(f"Found {len(subscriptions)} subscription(s)")
+    return token, subscriptions
+
+
+
+def _extract_cost_row(cost_item):
+    """Extract cost fields from a cost_item dict.
+
+    Returns: (cost_value, currency, cost_str, api_status, status_reason)
+    """
+    rows = cost_item["cost_data"].get("properties", {}).get("rows", [])
+    status_info = cost_item.get("status_info", {})
+    api_status = status_info.get("status_code", "N/A")
+    status_reason = status_info.get("reason", "")
+
+    if rows:
+        cost = rows[0][0] if len(rows[0]) > 0 else 0
+        currency = rows[0][1] if len(rows[0]) > 1 else "USD"
+        return cost, currency, f"{cost:.2f}", api_status, status_reason
+    else:
+        reason = status_reason if status_reason else "No cost data returned"
+        return 0, "USD", "0.00", api_status, reason
+
+
+
+def _send_cost_email(csv_content, filename, subject, html_body):
+    """Core ACS email send: env lookup, encoding, delivery. Raises on failure."""
+    ACS_CONNECTION_STRING = os.environ.get("ACS_CONNECTION_STRING")
+    ACS_SENDER_EMAIL = os.environ.get("ACS_SENDER_EMAIL")
+    ACS_RECIPIENT_EMAIL = os.environ.get("ACS_RECIPIENT_EMAIL")
+
+    if not ACS_CONNECTION_STRING:
+        raise ValueError("ACS_CONNECTION_STRING environment variable is not set")
+    if not ACS_SENDER_EMAIL:
+        raise ValueError("ACS_SENDER_EMAIL environment variable is not set")
+    if not ACS_RECIPIENT_EMAIL:
+        raise ValueError("ACS_RECIPIENT_EMAIL environment variable is not set")
+
+    email_client = EmailClient.from_connection_string(ACS_CONNECTION_STRING)
+    recipient_emails = [e.strip() for e in ACS_RECIPIENT_EMAIL.replace(';', ',').split(',') if e.strip()]
+
+    if not recipient_emails:
+        raise ValueError("No valid recipient emails found in ACS_RECIPIENT_EMAIL")
+
+    logger.info(f"Sender: {ACS_SENDER_EMAIL} | Recipients: {', '.join(recipient_emails)}")
+
+    csv_base64 = base64.b64encode(csv_content.encode('utf-8')).decode('utf-8')
+
+    message = {
+        "senderAddress": ACS_SENDER_EMAIL,
+        "recipients": {"to": [{"address": email} for email in recipient_emails]},
+        "content": {"subject": subject, "html": html_body},
+        "attachments": [{
+            "name": filename,
+            "contentType": "text/csv",
+            "contentInBase64": csv_base64
+        }]
+    }
+
+    logger.info("Sending email via ACS...")
+    poller = email_client.begin_send(message)
+    result = poller.result()
+    logger.info(f"   Email sent | Message ID: {result['id']} | Status: {result['status']}")
+    return True
+
+
+
 def get_all_subscriptions(token):
     """Fetch all subscriptions accessible to the service principal"""
     try:
@@ -239,8 +331,7 @@ def fetch_cost_for_subscription(token, subscription_id, start_date, end_date, ma
         "row_count": 0
     }
 
-    attempt = 0
-    while attempt <= max_retries:
+    for attempt in range(max_retries + 1):
         try:
             response = requests.post(url, headers=headers, json=body, timeout=60)
             status_info["status_code"] = response.status_code
@@ -273,9 +364,8 @@ def fetch_cost_for_subscription(token, subscription_id, start_date, end_date, ma
                         response.headers.get("Retry-After", 60)
                     )
                 )
-                attempt += 1
                 logger.warning(
-                    f"    HTTP 429 — rate limited (attempt {attempt}/{max_retries}). "
+                    f"    HTTP 429 — rate limited (attempt {attempt + 1}/{max_retries + 1}). "
                     f"Waiting {retry_after}s before retry..."
                 )
                 time.sleep(retry_after)
@@ -341,21 +431,10 @@ def generate_csv(all_costs_data, start_date_display, end_date_display):
         for cost_item in all_costs_data:
             sub_name = cost_item["subscription_name"]
             sub_id = cost_item["subscription_id"]
-            cost_data = cost_item["cost_data"]
-            status_info = cost_item.get("status_info", {})
+            cost, currency, cost_str, api_status, status_reason = _extract_cost_row(cost_item)
 
-            rows = cost_data.get("properties", {}).get("rows", [])
-            api_status = status_info.get("status_code", "N/A")
-            status_reason = status_info.get("reason", "")
-
-            if rows:
-                cost = rows[0][0] if len(rows[0]) > 0 else 0
-                currency = rows[0][1] if len(rows[0]) > 1 else "USD"
-                total_cost += cost
-                csv_writer.writerow([sub_name, sub_id, f"{cost:.2f}", currency, api_status, status_reason])
-            else:
-                no_data_reason = status_reason if status_reason else "No cost data returned"
-                csv_writer.writerow([sub_name, sub_id, "0.00", "USD", api_status, no_data_reason])
+            total_cost += cost
+            csv_writer.writerow([sub_name, sub_id, cost_str, currency, api_status, status_reason])
 
         csv_writer.writerow([])
         csv_writer.writerow(["TOTAL", "", f"{total_cost:.2f}", "USD", "", ""])
@@ -405,20 +484,10 @@ def generate_history_csv(all_months_data):
             for cost_item in costs_data:
                 sub_name = cost_item["subscription_name"]
                 sub_id = cost_item["subscription_id"]
-                cost_data = cost_item["cost_data"]
-                status_info = cost_item.get("status_info", {})
-                rows = cost_data.get("properties", {}).get("rows", [])
-                api_status = status_info.get("status_code", "N/A")
-                status_reason = status_info.get("reason", "")
+                cost, currency, cost_str, api_status, status_reason = _extract_cost_row(cost_item)
 
-                if rows:
-                    cost = rows[0][0] if len(rows[0]) > 0 else 0
-                    currency = rows[0][1] if len(rows[0]) > 1 else "USD"
-                    month_total += cost
-                    csv_writer.writerow([month_label, sub_name, sub_id, f"{cost:.2f}", currency, api_status, status_reason])
-                else:
-                    no_data_reason = status_reason if status_reason else "No cost data returned"
-                    csv_writer.writerow([month_label, sub_name, sub_id, "0.00", "USD", api_status, no_data_reason])
+                month_total += cost
+                csv_writer.writerow([month_label, sub_name, sub_id, cost_str, currency, api_status, status_reason])
 
             csv_writer.writerow([f"{month_label} TOTAL", "", "", f"{month_total:.2f}", "USD", "", ""])
             csv_writer.writerow([])
@@ -501,30 +570,6 @@ def send_email_with_csv_attachment(csv_content, filename, start_date_display, en
     try:
         logger.info("Preparing to send email via Azure Communication Services...")
 
-        ACS_CONNECTION_STRING = os.environ.get("ACS_CONNECTION_STRING")
-        ACS_SENDER_EMAIL = os.environ.get("ACS_SENDER_EMAIL")
-        ACS_RECIPIENT_EMAIL = os.environ.get("ACS_RECIPIENT_EMAIL")
-
-        if not ACS_CONNECTION_STRING:
-            raise ValueError("ACS_CONNECTION_STRING environment variable is not set")
-        if not ACS_SENDER_EMAIL:
-            raise ValueError("ACS_SENDER_EMAIL environment variable is not set")
-        if not ACS_RECIPIENT_EMAIL:
-            raise ValueError("ACS_RECIPIENT_EMAIL environment variable is not set")
-
-        logger.info(f"Sender email: {ACS_SENDER_EMAIL}")
-        logger.info(f"Recipient email(s): {ACS_RECIPIENT_EMAIL}")
-
-        email_client = EmailClient.from_connection_string(ACS_CONNECTION_STRING)
-        recipient_emails = [e.strip() for e in ACS_RECIPIENT_EMAIL.replace(';', ',').split(',') if e.strip()]
-
-        if not recipient_emails:
-            raise ValueError("No valid recipient emails found in ACS_RECIPIENT_EMAIL")
-
-        logger.info(f"Sending to {len(recipient_emails)} recipient(s): {', '.join(recipient_emails)}")
-
-        csv_base64 = base64.b64encode(csv_content.encode('utf-8')).decode('utf-8')
-
         status_summary_html = build_status_summary_html(all_costs_data)
 
         failed_items = [item for item in all_costs_data if not item.get("status_info", {}).get("success")]
@@ -601,30 +646,8 @@ def send_email_with_csv_attachment(csv_content, filename, start_date_display, en
         </html>
         """
 
-        message = {
-            "senderAddress": ACS_SENDER_EMAIL,
-            "recipients": {"to": [{"address": email} for email in recipient_emails]},
-            "content": {
-                "subject": f"Azure Cost Report - {start_date_display} to {end_date_display}",
-                "html": html_content
-            },
-            "attachments": [{
-                "name": filename,
-                "contentType": "text/csv",
-                "contentInBase64": csv_base64
-            }]
-        }
-
-        logger.info("Sending email via ACS with CSV attachment...")
-        poller = email_client.begin_send(message)
-        result = poller.result()
-
-        logger.info(f"   Email sent successfully!")
-        logger.info(f"   Message ID : {result['id']}")
-        logger.info(f"   Status     : {result['status']}")
-        logger.info(f"   Recipients : {', '.join(recipient_emails)}")
-        logger.info(f"   Attachment : {filename}")
-        return True
+        subject = f"Azure Cost Report - {start_date_display} to {end_date_display}"
+        return _send_cost_email(csv_content, filename, subject, html_content)
 
     except ValueError as ve:
         logger.error(f" Email configuration error: {str(ve)}")
@@ -634,31 +657,10 @@ def send_email_with_csv_attachment(csv_content, filename, start_date_display, en
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise
 
-def send_email_with_history_csv(csv_content, filename, start_month, end_month, grand_total, subscription_count, monthly_totals):
+def send_email_with_history_csv(csv_content, filename, start_month, end_month, grand_total, subscription_count, monthly_totals, failed_count):
     """Send history report email with multi-month CSV attachment."""
     try:
         logger.info("Preparing to send history report email via Azure Communication Services...")
-
-        ACS_CONNECTION_STRING = os.environ.get("ACS_CONNECTION_STRING")
-        ACS_SENDER_EMAIL = os.environ.get("ACS_SENDER_EMAIL")
-        ACS_RECIPIENT_EMAIL = os.environ.get("ACS_RECIPIENT_EMAIL")
-
-        if not ACS_CONNECTION_STRING:
-            raise ValueError("ACS_CONNECTION_STRING environment variable is not set")
-        if not ACS_SENDER_EMAIL:
-            raise ValueError("ACS_SENDER_EMAIL environment variable is not set")
-        if not ACS_RECIPIENT_EMAIL:
-            raise ValueError("ACS_RECIPIENT_EMAIL environment variable is not set")
-
-        email_client = EmailClient.from_connection_string(ACS_CONNECTION_STRING)
-        recipient_emails = [e.strip() for e in ACS_RECIPIENT_EMAIL.replace(';', ',').split(',') if e.strip()]
-
-        if not recipient_emails:
-            raise ValueError("No valid recipient emails found in ACS_RECIPIENT_EMAIL")
-
-        logger.info(f"Sending to {len(recipient_emails)} recipient(s): {', '.join(recipient_emails)}")
-
-        csv_base64 = base64.b64encode(csv_content.encode('utf-8')).decode('utf-8')
 
         monthly_rows_html = ""
         for i, entry in enumerate(monthly_totals):
@@ -692,6 +694,14 @@ def send_email_with_history_csv(csv_content, filename, start_month, end_month, g
             </table>
         </div>
         """
+
+        warning_html = ""
+        if failed_count > 0:
+            warning_html = f"""
+            <div style="background-color: #fffbeb; border: 1px solid #fcd34d; border-left: 4px solid #f59e0b; border-radius: 8px; padding: 16px 20px; margin: 24px 0;">
+                <p style="margin: 0; font-weight: 700; color: #92400e; font-size: 0.95em;">⚠ {failed_count} API call(s) failed during data collection — check the CSV for rows showing $0.00 with error details.</p>
+            </div>
+            """
 
         html_content = f"""
         <!DOCTYPE html>
@@ -731,6 +741,7 @@ def send_email_with_history_csv(csv_content, filename, start_month, end_month, g
                         </tr>
                     </table>
 
+                    {warning_html}
                     {monthly_table_html}
 
                     <p style="margin: 24px 0 0 0; font-size: 0.875em; color: #475569;">
@@ -750,30 +761,8 @@ def send_email_with_history_csv(csv_content, filename, start_month, end_month, g
         </html>
         """
 
-        message = {
-            "senderAddress": ACS_SENDER_EMAIL,
-            "recipients": {"to": [{"address": email} for email in recipient_emails]},
-            "content": {
-                "subject": f"Azure Cost History Report - {start_month} to {end_month}",
-                "html": html_content
-            },
-            "attachments": [{
-                "name": filename,
-                "contentType": "text/csv",
-                "contentInBase64": csv_base64
-            }]
-        }
-
-        logger.info("Sending history email via ACS with CSV attachment...")
-        poller = email_client.begin_send(message)
-        result = poller.result()
-
-        logger.info(f"   Email sent successfully!")
-        logger.info(f"   Message ID : {result['id']}")
-        logger.info(f"   Status     : {result['status']}")
-        logger.info(f"   Recipients : {', '.join(recipient_emails)}")
-        logger.info(f"   Attachment : {filename}")
-        return True
+        subject = f"Azure Cost History Report - {start_month} to {end_month}"
+        return _send_cost_email(csv_content, filename, subject, html_content)
 
     except ValueError as ve:
         logger.error(f" Email configuration error: {str(ve)}")
@@ -787,33 +776,19 @@ def _run_email_cost_report():
     """Shared logic for the email cost report, used by both timer and HTTP triggers."""
     # Step 1: Validate environment variables
     logger.info("Step 1: Validating environment variables...")
-    required_vars = [
-        "TENANT_ID", "CLIENT_ID", "CLIENT_SECRET",
-        "ACS_CONNECTION_STRING", "ACS_SENDER_EMAIL", "ACS_RECIPIENT_EMAIL"
-    ]
-    missing_vars = [var for var in required_vars if not os.environ.get(var)]
-    if missing_vars:
-        raise ValueError(f"Missing environment variables: {', '.join(missing_vars)}")
-    logger.info(" All environment variables present")
+    _validate_environment()
 
-    # Step 2: Get access token
-    logger.info("Step 2: Acquiring Azure access token...")
-    token = get_access_token()
+    # Step 2: Get access token and subscriptions
+    logger.info("Step 2: Acquiring Azure access token and fetching subscriptions...")
+    token, subscriptions = _get_token_and_subscriptions()
 
     # Step 3: Calculate date range
     logger.info("Step 3: Calculating date range...")
     start_date_api, end_date_api, start_date_display, end_date_display = get_current_month_range()
     logger.info(f"Date range: {start_date_display} to {end_date_display}")
 
-    # Step 4: Fetch subscriptions
-    logger.info("Step 4: Fetching all subscriptions...")
-    subscriptions = get_all_subscriptions(token)
-    if not subscriptions:
-        raise Exception("No subscriptions found - the service principal does not have access to any subscriptions")
-    logger.info(f"Found {len(subscriptions)} subscription(s)")
-
-    # Step 5: Fetch cost data for each subscription
-    logger.info("Step 5: Fetching cost data for all subscriptions...")
+    # Step 4: Fetch cost data for each subscription
+    logger.info("Step 4: Fetching cost data for all subscriptions...")
     all_costs_data = []
 
     for idx, subscription in enumerate(subscriptions, 1):
@@ -830,10 +805,10 @@ def _run_email_cost_report():
             "status_info": status_info
         })
 
-    # Step 5 summary
+    # Step 4 summary
     success_count = sum(1 for item in all_costs_data if item["status_info"]["success"])
     failed_count = len(all_costs_data) - success_count
-    logger.info(f"Step 5 Summary:  {success_count} succeeded |  {failed_count} failed | Total: {len(all_costs_data)}")
+    logger.info(f"Step 4 Summary:  {success_count} succeeded |  {failed_count} failed | Total: {len(all_costs_data)}")
 
     if failed_count > 0:
         logger.warning("Failed subscriptions detail:")
@@ -844,14 +819,14 @@ def _run_email_cost_report():
                     f"HTTP {item['status_info']['status_code']} — {item['status_info']['reason']}"
                 )
 
-    # Step 6: Generate CSV
-    logger.info("Step 6: Generating CSV report...")
+    # Step 5: Generate CSV
+    logger.info("Step 5: Generating CSV report...")
     csv_content, total_cost = generate_csv(all_costs_data, start_date_display, end_date_display)
     filename = f"azure_cost_report_{start_date_display}_to_{end_date_display}.csv"
     logger.info("CSV report generated")
 
-    # Step 7: Send email
-    logger.info("Step 7: Sending email with CSV attachment...")
+    # Step 6: Send email
+    logger.info("Step 6: Sending email with CSV attachment...")
     send_email_with_csv_attachment(
         csv_content, filename, start_date_display, end_date_display,
         total_cost, len(all_costs_data), all_costs_data
@@ -952,18 +927,11 @@ def _run_history_report(months=24):
     """Shared logic for the 24-month history report."""
     # Step 1: Validate environment variables
     logger.info("Step 1: Validating environment variables...")
-    required_vars = [
-        "TENANT_ID", "CLIENT_ID", "CLIENT_SECRET",
-        "ACS_CONNECTION_STRING", "ACS_SENDER_EMAIL", "ACS_RECIPIENT_EMAIL"
-    ]
-    missing_vars = [var for var in required_vars if not os.environ.get(var)]
-    if missing_vars:
-        raise ValueError(f"Missing environment variables: {', '.join(missing_vars)}")
-    logger.info(" All environment variables present")
+    _validate_environment()
 
-    # Step 2: Get access token
-    logger.info("Step 2: Acquiring Azure access token...")
-    token = get_access_token()
+    # Step 2: Get access token and subscriptions
+    logger.info("Step 2: Acquiring Azure access token and fetching subscriptions...")
+    token, subscriptions = _get_token_and_subscriptions()
 
     # Step 3: Calculate month ranges
     logger.info(f"Step 3: Calculating last {months} complete month ranges...")
@@ -972,16 +940,9 @@ def _run_history_report(months=24):
     end_month = month_ranges[-1][2]
     logger.info(f"Month range: {start_month} to {end_month}")
 
-    # Step 4: Fetch subscriptions
-    logger.info("Step 4: Fetching all subscriptions...")
-    subscriptions = get_all_subscriptions(token)
-    if not subscriptions:
-        raise Exception("No subscriptions found - the service principal does not have access to any subscriptions")
-    logger.info(f"Found {len(subscriptions)} subscription(s)")
-
-    # Step 5: Fetch cost data for each month × subscription
+    # Step 4: Fetch cost data for each month × subscription
     total_api_calls = len(month_ranges) * len(subscriptions)
-    logger.info(f"Step 5: Fetching cost data — {len(month_ranges)} months × {len(subscriptions)} subscriptions = {total_api_calls} API calls...")
+    logger.info(f"Step 4: Fetching cost data — {len(month_ranges)} months × {len(subscriptions)} subscriptions = {total_api_calls} API calls...")
     all_months_data = []
 
     for m_idx, (start_date_api, end_date_api, month_label) in enumerate(month_ranges, 1):
@@ -1000,17 +961,23 @@ def _run_history_report(months=24):
             })
         all_months_data.append({"month_label": month_label, "costs_data": costs_data})
 
-    # Step 6: Generate history CSV
-    logger.info("Step 6: Generating history CSV report...")
+    failed_count = sum(
+        1 for m in all_months_data
+        for item in m["costs_data"]
+        if not item["status_info"]["success"]
+    )
+
+    # Step 5: Generate history CSV
+    logger.info("Step 5: Generating history CSV report...")
     csv_content, grand_total, monthly_totals = generate_history_csv(all_months_data)
     filename = f"azure_cost_history_{start_month}_to_{end_month}.csv"
     logger.info("History CSV report generated")
 
-    # Step 7: Send email
-    logger.info("Step 7: Sending email with history CSV attachment...")
+    # Step 6: Send email
+    logger.info("Step 6: Sending email with history CSV attachment...")
     send_email_with_history_csv(
         csv_content, filename, start_month, end_month,
-        grand_total, len(subscriptions), monthly_totals
+        grand_total, len(subscriptions), monthly_totals, failed_count=failed_count
     )
     logger.info("Email sent successfully")
 
@@ -1021,6 +988,7 @@ def _run_history_report(months=24):
         "subscriptions": len(subscriptions),
         "periodStart": start_month,
         "periodEnd": end_month,
+        "failed": failed_count,
         "reportFile": filename
     }
 
