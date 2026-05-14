@@ -126,6 +126,30 @@ def get_current_month_range():
         raise
 
 
+def get_last_n_months(n=24):
+    """Return a list of (start_date_api, end_date_api, month_label) for the last N complete months."""
+    try:
+        today = datetime.date.today()
+        first_of_current = today.replace(day=1)
+        months = []
+        for i in range(n, 0, -1):
+            total_0idx = first_of_current.year * 12 + (first_of_current.month - 1) - i
+            year = total_0idx // 12
+            month = (total_0idx % 12) + 1
+            first_day = datetime.date(year, month, 1)
+            if month == 12:
+                last_day = datetime.date(year + 1, 1, 1) - datetime.timedelta(days=1)
+            else:
+                last_day = datetime.date(year, month + 1, 1) - datetime.timedelta(days=1)
+            month_label = first_day.strftime("%Y-%m")
+            months.append((first_day.isoformat(), last_day.isoformat(), month_label))
+        logger.info(f"Generated {len(months)} month ranges from {months[0][2]} to {months[-1][2]}")
+        return months
+    except Exception as e:
+        logger.error(f"Error calculating month ranges: {str(e)}")
+        raise
+
+
 def get_all_subscriptions(token):
     """Fetch all subscriptions accessible to the service principal"""
     try:
@@ -346,6 +370,74 @@ def generate_csv(all_costs_data, start_date_display, end_date_display):
         raise
 
 
+def generate_history_csv(all_months_data):
+    """Generate a multi-month CSV.
+
+    all_months_data: list of dicts with keys:
+        month_label (str), costs_data (list of cost_item dicts)
+
+    Returns: (csv_content, grand_total, monthly_totals)
+        monthly_totals: list of {month_label, total}
+    """
+    try:
+        logger.info("Generating history CSV file...")
+        csv_buffer = io.StringIO()
+        csv_writer = csv.writer(csv_buffer)
+
+        csv_writer.writerow([
+            "Month",
+            "Subscription Name",
+            "Subscription ID",
+            "Total Cost",
+            "Currency",
+            "API Status Code",
+            "Status / Reason"
+        ])
+
+        grand_total = 0
+        monthly_totals = []
+
+        for month_entry in all_months_data:
+            month_label = month_entry["month_label"]
+            costs_data = month_entry["costs_data"]
+            month_total = 0
+
+            for cost_item in costs_data:
+                sub_name = cost_item["subscription_name"]
+                sub_id = cost_item["subscription_id"]
+                cost_data = cost_item["cost_data"]
+                status_info = cost_item.get("status_info", {})
+                rows = cost_data.get("properties", {}).get("rows", [])
+                api_status = status_info.get("status_code", "N/A")
+                status_reason = status_info.get("reason", "")
+
+                if rows:
+                    cost = rows[0][0] if len(rows[0]) > 0 else 0
+                    currency = rows[0][1] if len(rows[0]) > 1 else "USD"
+                    month_total += cost
+                    csv_writer.writerow([month_label, sub_name, sub_id, f"{cost:.2f}", currency, api_status, status_reason])
+                else:
+                    no_data_reason = status_reason if status_reason else "No cost data returned"
+                    csv_writer.writerow([month_label, sub_name, sub_id, "0.00", "USD", api_status, no_data_reason])
+
+            csv_writer.writerow([f"{month_label} TOTAL", "", "", f"{month_total:.2f}", "USD", "", ""])
+            csv_writer.writerow([])
+
+            grand_total += month_total
+            monthly_totals.append({"month_label": month_label, "total": month_total})
+
+        csv_writer.writerow(["GRAND TOTAL", "", "", f"{grand_total:.2f}", "USD", "", ""])
+
+        csv_content = csv_buffer.getvalue()
+        logger.info(f"History CSV generated | Months: {len(all_months_data)} | Grand Total: ${grand_total:.2f}")
+        return csv_content, grand_total, monthly_totals
+
+    except Exception as e:
+        logger.error(f"Error generating history CSV: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise
+
+
 def build_status_summary_html(all_costs_data):
     """Build a subscription-wise API status summary table for the email body"""
     success_count = sum(1 for item in all_costs_data if item.get("status_info", {}).get("success"))
@@ -542,6 +634,155 @@ def send_email_with_csv_attachment(csv_content, filename, start_date_display, en
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise
 
+def send_email_with_history_csv(csv_content, filename, start_month, end_month, grand_total, subscription_count, monthly_totals):
+    """Send history report email with multi-month CSV attachment."""
+    try:
+        logger.info("Preparing to send history report email via Azure Communication Services...")
+
+        ACS_CONNECTION_STRING = os.environ.get("ACS_CONNECTION_STRING")
+        ACS_SENDER_EMAIL = os.environ.get("ACS_SENDER_EMAIL")
+        ACS_RECIPIENT_EMAIL = os.environ.get("ACS_RECIPIENT_EMAIL")
+
+        if not ACS_CONNECTION_STRING:
+            raise ValueError("ACS_CONNECTION_STRING environment variable is not set")
+        if not ACS_SENDER_EMAIL:
+            raise ValueError("ACS_SENDER_EMAIL environment variable is not set")
+        if not ACS_RECIPIENT_EMAIL:
+            raise ValueError("ACS_RECIPIENT_EMAIL environment variable is not set")
+
+        email_client = EmailClient.from_connection_string(ACS_CONNECTION_STRING)
+        recipient_emails = [e.strip() for e in ACS_RECIPIENT_EMAIL.replace(';', ',').split(',') if e.strip()]
+
+        if not recipient_emails:
+            raise ValueError("No valid recipient emails found in ACS_RECIPIENT_EMAIL")
+
+        logger.info(f"Sending to {len(recipient_emails)} recipient(s): {', '.join(recipient_emails)}")
+
+        csv_base64 = base64.b64encode(csv_content.encode('utf-8')).decode('utf-8')
+
+        monthly_rows_html = ""
+        for i, entry in enumerate(monthly_totals):
+            row_bg = "#ffffff" if i % 2 == 0 else "#f8fafc"
+            monthly_rows_html += f"""
+            <tr style="background-color: {row_bg}; border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 10px 16px; font-weight: 500; color: #1e293b;">{entry['month_label']}</td>
+                <td style="padding: 10px 16px; text-align: right; font-weight: 600; color: #1e293b;">${entry['total']:,.2f}</td>
+            </tr>
+            """
+
+        monthly_table_html = f"""
+        <div style="margin: 28px 0;">
+            <h3 style="font-size: 1em; font-weight: 600; color: #1e293b; text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 12px 0;">Monthly Totals</h3>
+            <table style="width: 100%; border-collapse: collapse; font-size: 0.9em; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
+                <thead>
+                    <tr style="background-color: #1e293b; color: #f1f5f9;">
+                        <th style="padding: 12px 16px; text-align: left; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">Month</th>
+                        <th style="padding: 12px 16px; text-align: right; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">Total Cost (USD)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {monthly_rows_html}
+                </tbody>
+                <tfoot>
+                    <tr style="background-color: #0078d4;">
+                        <td style="padding: 12px 16px; font-weight: 700; color: #ffffff;">Grand Total</td>
+                        <td style="padding: 12px 16px; text-align: right; font-weight: 700; color: #ffffff;">${grand_total:,.2f}</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+        """
+
+        html_content = f"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+        <body style="margin: 0; padding: 0; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; color: #1e293b;">
+            <div style="max-width: 760px; margin: 32px auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.07);">
+
+                <!-- Header -->
+                <div style="background-color: #0078d4; padding: 36px 40px;">
+                    <p style="margin: 0 0 6px 0; font-size: 0.75em; font-weight: 600; color: #bfdbfe; text-transform: uppercase; letter-spacing: 0.1em;">Azure Cost Management</p>
+                    <h1 style="margin: 0; font-size: 1.6em; font-weight: 700; color: #ffffff; line-height: 1.2;">Cost History Report</h1>
+                    <p style="margin: 8px 0 0 0; font-size: 0.875em; color: #dbeafe;">{start_month} &mdash; {end_month}</p>
+                </div>
+
+                <!-- Body -->
+                <div style="padding: 36px 40px;">
+                    <p style="margin: 0 0 28px 0; font-size: 0.95em; color: #475569;">Here is your Azure cost history. The full per-subscription breakdown is attached as a CSV file.</p>
+
+                    <!-- Metric Cards -->
+                    <table style="width: 100%; border-collapse: separate; border-spacing: 12px; margin: 0 -12px 12px -12px;">
+                        <tr>
+                            <td style="width: 33%; background-color: #f0f6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 20px 24px; vertical-align: top;">
+                                <p style="margin: 0 0 6px 0; font-size: 0.72em; font-weight: 600; color: #2563eb; text-transform: uppercase; letter-spacing: 0.07em;">Period</p>
+                                <p style="margin: 0; font-size: 0.95em; font-weight: 600; color: #1e293b;">{start_month}</p>
+                                <p style="margin: 2px 0 0 0; font-size: 0.8em; color: #64748b;">to {end_month}</p>
+                            </td>
+                            <td style="width: 33%; background-color: #f0f6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 20px 24px; vertical-align: top;">
+                                <p style="margin: 0 0 6px 0; font-size: 0.72em; font-weight: 600; color: #2563eb; text-transform: uppercase; letter-spacing: 0.07em;">Subscriptions</p>
+                                <p style="margin: 0; font-size: 1.6em; font-weight: 700; color: #1e293b;">{subscription_count}</p>
+                            </td>
+                            <td style="width: 33%; background-color: #0078d4; border-radius: 10px; padding: 20px 24px; vertical-align: top;">
+                                <p style="margin: 0 0 6px 0; font-size: 0.72em; font-weight: 600; color: #dbeafe; text-transform: uppercase; letter-spacing: 0.07em;">Grand Total</p>
+                                <p style="margin: 0; font-size: 1.6em; font-weight: 700; color: #ffffff;">${grand_total:,.2f}</p>
+                                <p style="margin: 2px 0 0 0; font-size: 0.8em; color: #dbeafe;">USD</p>
+                            </td>
+                        </tr>
+                    </table>
+
+                    {monthly_table_html}
+
+                    <p style="margin: 24px 0 0 0; font-size: 0.875em; color: #475569;">
+                        The detailed per-subscription breakdown is attached: <strong style="color: #1e293b;">{filename}</strong>
+                    </p>
+                </div>
+
+                <!-- Footer -->
+                <div style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; padding: 20px 40px;">
+                    <p style="margin: 0; font-size: 0.8em; color: #94a3b8; line-height: 1.6;">
+                        Automated report &bull; Azure Function (HTTP Trigger) &bull; Generated {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")} UTC
+                    </p>
+                </div>
+
+            </div>
+        </body>
+        </html>
+        """
+
+        message = {
+            "senderAddress": ACS_SENDER_EMAIL,
+            "recipients": {"to": [{"address": email} for email in recipient_emails]},
+            "content": {
+                "subject": f"Azure Cost History Report - {start_month} to {end_month}",
+                "html": html_content
+            },
+            "attachments": [{
+                "name": filename,
+                "contentType": "text/csv",
+                "contentInBase64": csv_base64
+            }]
+        }
+
+        logger.info("Sending history email via ACS with CSV attachment...")
+        poller = email_client.begin_send(message)
+        result = poller.result()
+
+        logger.info(f"   Email sent successfully!")
+        logger.info(f"   Message ID : {result['id']}")
+        logger.info(f"   Status     : {result['status']}")
+        logger.info(f"   Recipients : {', '.join(recipient_emails)}")
+        logger.info(f"   Attachment : {filename}")
+        return True
+
+    except ValueError as ve:
+        logger.error(f" Email configuration error: {str(ve)}")
+        raise
+    except Exception as e:
+        logger.error(f" Email send FAILED: {type(e).__name__}: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise
+
 def _run_email_cost_report():
     """Shared logic for the email cost report, used by both timer and HTTP triggers."""
     # Step 1: Validate environment variables
@@ -699,6 +940,134 @@ def run_email_cost_report(req: func.HttpRequest) -> func.HttpResponse:
         )
     except Exception as e:
         logger.error(f"HTTP trigger failed: {type(e).__name__}: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return func.HttpResponse(
+            body=json.dumps({"error": f"{type(e).__name__}: {str(e)}"}, indent=2),
+            status_code=500,
+            mimetype="application/json"
+        )
+
+
+def _run_history_report(months=24):
+    """Shared logic for the 24-month history report."""
+    # Step 1: Validate environment variables
+    logger.info("Step 1: Validating environment variables...")
+    required_vars = [
+        "TENANT_ID", "CLIENT_ID", "CLIENT_SECRET",
+        "ACS_CONNECTION_STRING", "ACS_SENDER_EMAIL", "ACS_RECIPIENT_EMAIL"
+    ]
+    missing_vars = [var for var in required_vars if not os.environ.get(var)]
+    if missing_vars:
+        raise ValueError(f"Missing environment variables: {', '.join(missing_vars)}")
+    logger.info(" All environment variables present")
+
+    # Step 2: Get access token
+    logger.info("Step 2: Acquiring Azure access token...")
+    token = get_access_token()
+
+    # Step 3: Calculate month ranges
+    logger.info(f"Step 3: Calculating last {months} complete month ranges...")
+    month_ranges = get_last_n_months(months)
+    start_month = month_ranges[0][2]
+    end_month = month_ranges[-1][2]
+    logger.info(f"Month range: {start_month} to {end_month}")
+
+    # Step 4: Fetch subscriptions
+    logger.info("Step 4: Fetching all subscriptions...")
+    subscriptions = get_all_subscriptions(token)
+    if not subscriptions:
+        raise Exception("No subscriptions found - the service principal does not have access to any subscriptions")
+    logger.info(f"Found {len(subscriptions)} subscription(s)")
+
+    # Step 5: Fetch cost data for each month × subscription
+    total_api_calls = len(month_ranges) * len(subscriptions)
+    logger.info(f"Step 5: Fetching cost data — {len(month_ranges)} months × {len(subscriptions)} subscriptions = {total_api_calls} API calls...")
+    all_months_data = []
+
+    for m_idx, (start_date_api, end_date_api, month_label) in enumerate(month_ranges, 1):
+        logger.info(f"  Month [{m_idx}/{len(month_ranges)}]: {month_label}")
+        costs_data = []
+        for s_idx, subscription in enumerate(subscriptions, 1):
+            sub_id = subscription.get("subscriptionId")
+            sub_name = subscription.get("displayName", "Unknown")
+            logger.info(f"    Sub [{s_idx}/{len(subscriptions)}]: {sub_name}")
+            cost_data, status_info = fetch_cost_for_subscription(token, sub_id, start_date_api, end_date_api)
+            costs_data.append({
+                "subscription_id": sub_id,
+                "subscription_name": sub_name,
+                "cost_data": cost_data,
+                "status_info": status_info
+            })
+        all_months_data.append({"month_label": month_label, "costs_data": costs_data})
+
+    # Step 6: Generate history CSV
+    logger.info("Step 6: Generating history CSV report...")
+    csv_content, grand_total, monthly_totals = generate_history_csv(all_months_data)
+    filename = f"azure_cost_history_{start_month}_to_{end_month}.csv"
+    logger.info("History CSV report generated")
+
+    # Step 7: Send email
+    logger.info("Step 7: Sending email with history CSV attachment...")
+    send_email_with_history_csv(
+        csv_content, filename, start_month, end_month,
+        grand_total, len(subscriptions), monthly_totals
+    )
+    logger.info("Email sent successfully")
+
+    return {
+        "status": "ok",
+        "grandTotal": f"${grand_total:,.2f} USD",
+        "months": len(month_ranges),
+        "subscriptions": len(subscriptions),
+        "periodStart": start_month,
+        "periodEnd": end_month,
+        "reportFile": filename
+    }
+
+
+@app.function_name(name="RunHistoryCostReport")
+@app.route(route="reports/email/history", methods=["GET", "POST"])
+def run_history_cost_report(req: func.HttpRequest) -> func.HttpResponse:
+    """HTTP trigger to generate and email a cost history report for the last N complete months.
+
+    Optional query parameter:
+        months (int): Number of complete months to include. Defaults to 24.
+    """
+    logger.info('=' * 80)
+    logger.info('Azure Cost History Report - HTTP Triggered Execution Starting')
+    logger.info('=' * 80)
+
+    months_param = req.params.get("months", "24")
+    try:
+        months = int(months_param)
+        if months < 1 or months > 60:
+            return func.HttpResponse(
+                body=json.dumps({"error": "months must be between 1 and 60"}, indent=2),
+                status_code=400,
+                mimetype="application/json"
+            )
+    except ValueError:
+        return func.HttpResponse(
+            body=json.dumps({"error": f"Invalid months parameter: '{months_param}'"}, indent=2),
+            status_code=400,
+            mimetype="application/json"
+        )
+
+    try:
+        result = _run_history_report(months=months)
+        return func.HttpResponse(
+            body=json.dumps(result, indent=2),
+            status_code=200,
+            mimetype="application/json"
+        )
+    except ValueError as ve:
+        return func.HttpResponse(
+            body=json.dumps({"error": str(ve)}, indent=2),
+            status_code=400,
+            mimetype="application/json"
+        )
+    except Exception as e:
+        logger.error(f"History HTTP trigger failed: {type(e).__name__}: {str(e)}")
         logger.error(f"Traceback: {traceback.format_exc()}")
         return func.HttpResponse(
             body=json.dumps({"error": f"{type(e).__name__}: {str(e)}"}, indent=2),
