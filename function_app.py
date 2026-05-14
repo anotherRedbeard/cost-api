@@ -8,6 +8,7 @@ import traceback
 import csv
 import base64
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from azure.communication.email import EmailClient
 import azure.functions as func
 app = func.FunctionApp()
@@ -940,26 +941,42 @@ def _run_history_report(months=24):
     end_month = month_ranges[-1][2]
     logger.info(f"Month range: {start_month} to {end_month}")
 
-    # Step 4: Fetch cost data for each month × subscription
+    # Step 4: Fetch cost data for all month × subscription combinations in parallel
     total_api_calls = len(month_ranges) * len(subscriptions)
-    logger.info(f"Step 4: Fetching cost data — {len(month_ranges)} months × {len(subscriptions)} subscriptions = {total_api_calls} API calls...")
-    all_months_data = []
+    logger.info(f"Step 4: Fetching cost data — {len(month_ranges)} months × {len(subscriptions)} subscriptions = {total_api_calls} API calls (parallel)...")
 
-    for m_idx, (start_date_api, end_date_api, month_label) in enumerate(month_ranges, 1):
-        logger.info(f"  Month [{m_idx}/{len(month_ranges)}]: {month_label}")
-        costs_data = []
-        for s_idx, subscription in enumerate(subscriptions, 1):
-            sub_id = subscription.get("subscriptionId")
-            sub_name = subscription.get("displayName", "Unknown")
-            logger.info(f"    Sub [{s_idx}/{len(subscriptions)}]: {sub_name}")
-            cost_data, status_info = fetch_cost_for_subscription(token, sub_id, start_date_api, end_date_api)
-            costs_data.append({
-                "subscription_id": sub_id,
-                "subscription_name": sub_name,
-                "cost_data": cost_data,
-                "status_info": status_info
-            })
-        all_months_data.append({"month_label": month_label, "costs_data": costs_data})
+    def _fetch_one(start_date_api, end_date_api, month_label, subscription):
+        sub_id = subscription.get("subscriptionId")
+        sub_name = subscription.get("displayName", "Unknown")
+        cost_data, status_info = fetch_cost_for_subscription(token, sub_id, start_date_api, end_date_api)
+        return month_label, {
+            "subscription_id": sub_id,
+            "subscription_name": sub_name,
+            "cost_data": cost_data,
+            "status_info": status_info,
+        }
+
+    # Collect results keyed by month_label, then sort to preserve chronological order
+    month_buckets = {label: [] for _, _, label in month_ranges}
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [
+            executor.submit(_fetch_one, start, end, label, sub)
+            for start, end, label in month_ranges
+            for sub in subscriptions
+        ]
+        for future in as_completed(futures):
+            month_label, cost_item = future.result()
+            month_buckets[month_label].append(cost_item)
+
+    # Restore subscription order within each month (thread pool returns out of order)
+    sub_order = {sub.get("subscriptionId"): i for i, sub in enumerate(subscriptions)}
+    all_months_data = [
+        {
+            "month_label": label,
+            "costs_data": sorted(month_buckets[label], key=lambda x: sub_order.get(x["subscription_id"], 0)),
+        }
+        for _, _, label in month_ranges
+    ]
 
     failed_count = sum(
         1 for m in all_months_data
