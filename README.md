@@ -3,8 +3,9 @@
 A Python Azure Function App that queries the Azure Cost Management API across all accessible subscriptions and emails a monthly cost report with a CSV attachment.
 
 **Triggers:**
-- `MonthlyReport` — timer, runs on the 1st of each month
-- `RunEmailCostReport` — HTTP GET/POST for on-demand runs
+- `MonthlyReport` — timer, runs weekdays at 8am CST (configurable via `MONTHLY_REPORT_SCHEDULE`)
+- `RunEmailCostReport` — HTTP GET/POST `/api/reports/email/run` — on-demand MTD report
+- `RunHistoryCostReport` — HTTP GET/POST `/api/reports/email/history` — last 24 complete months (override with `?months=N`, max 60)
 - `health` — health check endpoint
 
 Uses `DefaultAzureCredential` (managed identity in Azure, CLI auth locally).
@@ -53,11 +54,10 @@ pip install -r requirements.txt
 cp local.settings.sample.json local.settings.json
 ```
 
-Set in `local.settings.json`: `MONTHLY_REPORT_SUBSCRIPTION_ID`, `languageWorkers__python__defaultExecutablePath`
+Fill in all values in `local.settings.json` — see the table below and the sample file for descriptions of each setting.
 
 ```bash
 azurite &   # storage emulator
-az login
 func start
 ```
 
@@ -71,12 +71,13 @@ curl -X POST http://localhost:7071/api/reports/email/run
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `ACS_CONNECTION_STRING` | — | Azure Communication Services connection string |
-| `ACS_SENDER_EMAIL` | — | From address |
-| `ACS_RECIPIENT_EMAIL` | — | To address(es), comma or semicolon separated |
 | `TENANT_ID` | — | Service principal tenant |
 | `CLIENT_ID` | — | Service principal client ID |
 | `CLIENT_SECRET` | — | Service principal client secret |
+| `ACS_CONNECTION_STRING` | — | Azure Communication Services connection string |
+| `ACS_SENDER_EMAIL` | — | From address (must be verified in ACS) |
+| `ACS_RECIPIENT_EMAIL` | — | To address(es), comma or semicolon separated |
+| `MONTHLY_REPORT_SCHEDULE` | `0 0 8 * * 1-5` | Timer cron expression (weekdays 8am UTC) |
 
 ## Deployment
 

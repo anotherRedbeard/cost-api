@@ -4,18 +4,18 @@
     "FUNCTIONS_WORKER_RUNTIME": "python",
     "AzureWebJobsStorage": "UseDevelopmentStorage=true",
     "AzureWebJobsFeatureFlags": "EnableWorkerIndexing",
-    "MONTHLY_REPORT_SCHEDULE": "0 0 14 * * 1-5",
-    "MONTHLY_REPORT_RUN_ON_STARTUP": "false",
-    "MONTHLY_REPORT_SUBSCRIPTION_ID": "",
-    "MONTHLY_REPORT_GRANULARITY": "None",
-    "MONTHLY_REPORT_BLOB_CONTAINER": "monthly-cost-reports",
-    "TENANT_ID": "",
-    "CLIENT_ID": "",
-    "CLIENT_SECRET": "",
-    "ACS_CONNECTION_STRING": "",
-    "ACS_SENDER_EMAIL": "",
-    "ACS_RECIPIENT_EMAIL": "",
     "PYTHON_ENABLE_INIT_INDEXING": "1",
-    "languageWorkers__python__defaultExecutablePath": "/full/path/to/your/project/.venv/bin/python"
+
+    "MONTHLY_REPORT_SCHEDULE": "0 0 8 * * 1-5",
+
+    "TENANT_ID": "<your-service-principal-tenant-id>",
+    "CLIENT_ID": "<your-service-principal-client-id>",
+    "CLIENT_SECRET": "<your-service-principal-client-secret>",
+
+    "ACS_CONNECTION_STRING": "<your-acs-connection-string>",
+    "ACS_SENDER_EMAIL": "<your-verified-acs-sender-email>",
+    "ACS_RECIPIENT_EMAIL": "<comma-or-semicolon-separated-recipient-emails>",
+
+    "languageWorkers__python__defaultExecutablePath": "<full-path-to/.venv/bin/python>"
   }
 }
